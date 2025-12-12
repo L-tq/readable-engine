@@ -49,8 +49,7 @@ impl RvoManager {
             let rel_pos = other.position - agent.position;
             let rel_vel = agent.velocity - other.velocity;
             let dist = dist_sq.sqrt();
-            let combined_radius_sq = combined_radius * combined_radius;
-
+            
             // Simple Repulsion / Velocity Obstacle Logic
             // If we are going to collide...
             if dist < combined_radius {

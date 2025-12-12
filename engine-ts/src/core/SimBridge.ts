@@ -1,39 +1,44 @@
 import init, { Simulation } from "../../../core-sim/pkg/core_sim";
 
+// We need to access the WASM memory buffer directly
+// vite-plugin-wasm usually exposes the instance, or we can grab it from the init result
+let wasmMemory: WebAssembly.Memory;
+
 export class SimBridge {
     private sim: Simulation | null = null;
     private initialized = false;
 
     async init() {
         if (this.initialized) return;
-
-        // Initialize the Wasm module
-        await init();
+        const wasmResult = await init();
+        wasmMemory = wasmResult.memory; // Grab memory reference
 
         this.sim = new Simulation();
         this.initialized = true;
-        console.log("🦀 Rust Core Initialized");
+        console.log("🦀 Rust Core Initialized (Binary Mode)");
     }
 
-    addEntity(id: number, x: number, y: number) {
-        this.sim?.add_entity(id, x, y);
+    addAgent(id: number, x: number, y: number, radius: number, speed: number) {
+        this.sim?.add_agent(id, x, y, radius, speed);
     }
 
-    /**
-     * Advances the simulation by exactly one tick.
-     * @param inputsJson JSON string of inputs for this tick
-     */
     tick(inputsJson: string) {
         if (!this.sim) return;
         this.sim.tick(inputsJson);
     }
 
     /**
-     * Gets the current state for the renderer.
+     * Reads the raw Float64Array from Wasm memory.
+     * Returns a view, not a copy (mostly).
      */
-    getState(): any[] {
-        if (!this.sim) return [];
-        const stateStr = this.sim.get_state();
-        return JSON.parse(stateStr);
+    getStateBuffer(): Float64Array | null {
+        if (!this.sim) return null;
+
+        const ptr = this.sim.get_state_ptr();
+        const len = this.sim.get_state_len();
+
+        // Create a view into the WASM memory
+        // Note: This view is valid only until the next WASM allocation (tick)
+        return new Float64Array(wasmMemory.buffer, ptr, len);
     }
 }

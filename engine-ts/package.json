@@ -1,25 +1,26 @@
 {
   "name": "engine-ts",
-  "version": "1.0.0",
-  "main": "index.js",
+  "version": "0.3.0",
+  "description": "TypeScript shell for Readable Engine",
+  "type": "module",
+  "license": "AGPL-3.0",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check": "tsc --noEmit"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
   "dependencies": {
-    "@types/node": "^25.0.1",
-    "@types/three": "^0.182.0",
-    "bitecs": "^0.4.0",
-    "three": "^0.182.0",
-    "typescript": "^5.9.3",
-    "vite": "^7.2.7",
-    "vite-plugin-top-level-await": "^1.4.4",
-    "vite-plugin-wasm": "^3.4.1",
-    "zod": "^4.1.13"
+    "bitecs": "^0.3.40",
+    "three": "^0.160.0",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/three": "^0.160.0",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.12",
+    "vite-plugin-top-level-await": "^1.4.1",
+    "vite-plugin-wasm": "^3.3.0"
   }
 }

@@ -4,7 +4,7 @@
 
 Readable Engine is an experimental Real-Time Strategy (RTS) framework designed to bridge the gap between high-performance deterministic simulation (Rust/Wasm) and high-context semantic readability (TypeScript/JSON).
 
-It is built specifically to be "piloted" by Large Language Models. API surfaces are verbose, data is strictly typed via schemas, and architecture favors composition over inheritance, allowing LLMs to write game logic without hallucinating complex state management.
+It is built specifically to be "piloted" by Large Language Models. API surfaces are verbose, data is strictly typed via schemas, and architecture favors composition over inheritance.
 
 ---
 
@@ -17,69 +17,67 @@ The "Black Box" of the engine. It handles the heavy lifting where binary determi
 *   **Compiles to:** WebAssembly (Wasm).
 *   **Responsibilities:**
     *   Fixed-Point Math (via `glam` f64).
-    *   Pathfinding (Flow Fields, NavMesh + Funnel, HPA*).
-    *   Physics & Collision (RVO - Reciprocal Velocity Obstacles).
-    *   State Management (The "Truth" of the simulation).
+    *   **RVO Collision** (Reciprocal Velocity Obstacles).
+    *   **Binary State Sync:** Exposes raw memory pointers (`Float64Array`) to JS for zero-copy state updates.
 
 ### 2. The Shell (`/engine-ts`) - TypeScript 📘
 The "Glue" that connects the simulation to the browser.
-*   **Responsibilities:**
-    *   **Game Loop:** Accumulator-based fixed timestep loop (15-20 TPS).
-    *   **Rendering:** Three.js (Interpolated state for smooth 60fps visuals).
-    *   **Networking:** "Virtual Server" pattern (Abstracted Transport for Geckos.io/PeerJS).
-    *   **Input:** Spatial Partitioning (Quadtree) for unit selection.
+*   **ECS (Entity Component System):** Uses **bitECS** for high-performance memory layout.
+*   **The Hydrator:** A system that converts human-readable JSON into binary ECS arrays.
+*   **Game Loop:** Accumulator-based fixed timestep loop (15-20 TPS).
+*   **Rendering:** Three.js (Interpolated state for smooth 60fps visuals).
 
 ### 3. The Data (`/game-data`) - JSON 📄
 The "Interface" for the LLM.
-*   **Philosophy:** If it's not in a JSON file, it doesn't exist.
-*   **Usage:** Units, Levels, and Tech Trees are defined here in strict schemas.
+*   **Zod Schemas:** Strict validation ensures the LLM doesn't "hallucinate" invalid properties.
+*   **Usage:** Units are defined purely as data.
 
 ---
 
-## 🚀 Current Status: Phase 2 (Simulation Core)
+## 🚀 Current Status: Phase 3 (State & Data)
 
-We have successfully implemented the **Deterministic Core**.
+We have successfully implemented the **ECS & Data Layer**.
 
-### Implemented Algorithms:
-1.  **RVO (Reciprocal Velocity Obstacles):**
-    *   Local collision avoidance. Units nudge each other out of the way smoothly without overlapping.
-    *   *Status:* Basic implementation active.
-2.  **Flow Fields (Vector Fields):**
-    *   Optimized for swarms (100+ units).
-    *   Calculates a map of directions once; units simply "flow" downhill.
-    *   *Status:* Dijkstra integration field implemented.
-3.  **NavMesh + Funnel Algorithm:**
-    *   Optimized for complex geometry.
-    *   Uses A* on a mesh of triangles, followed by String Pulling (Funnel) to smooth paths.
-    *   *Status:* Triangle graph logic and barycentric checks active.
-4.  **HPA\* (Hierarchical Pathfinding A\*):**
-    *   Optimized for long-distance grid movement.
-    *   Divides map into clusters to speed up calculation.
-    *   *Status:* Cluster segmentation structure active.
+### ✅ Implemented Features:
+*   **RVO & Flow Fields:** Deterministic pathfinding in Rust.
+*   **bitECS Integration:** High-performance SoA (Structure of Arrays) in TypeScript.
+*   **The Hydrator:** Spawns entities from JSON definitions.
+*   **Binary Sync:** Zero-copy memory transfer from Rust Physics -> TypeScript ECS.
+*   **Zod Validation:** Runtime schema checking for entity definitions.
 
 ---
 
 ## 🛠 Setup & Run
 
 ### Prerequisites
-*   **Node.js** (v18+)
-*   **Rust** (latest stable)
-*   **wasm-pack** (`cargo install wasm-pack`)
+1.  **Node.js** (v18+)
+2.  **Rust** (latest stable)
+3.  **wasm-pack** (Install via: `cargo install wasm-pack`)
 
-### 1. Build the Wasm Core
+### Step 1: Build the Wasm Core
+Compile the Rust simulation code into WebAssembly.
+
 ```bash
 cd core-sim
 npx wasm-pack build --target web
 ```
 
-### 2. Run the Engine
+### Step 2: Install Engine Dependencies
+Install TypeScript libraries (bitECS, Three.js, Zod).
+
 ```bash
-cd engine-ts
+cd ../engine-ts
 npm install
+```
+
+### Step 3: Run the Simulation
+Start the Vite development server.
+
+```bash
 npm run dev
 ```
 
-Open `http://localhost:3000` to see the simulation.
+Open `http://localhost:5173` (or the port shown in terminal) to see the simulation.
 
 ---
 
@@ -87,13 +85,24 @@ Open `http://localhost:3000` to see the simulation.
 
 When working with an LLM to build games on this engine, follow these rules:
 
-### 1. The "Manifest" Protocol
-Always provide the API Manifest (generated in `/generated/manifest.txt`) in your system prompt. This tells the LLM available ECS components and Events.
+### 1. The "Hydrator" Protocol
+Do not write classes for units. Write **Data**.
+**Prompt:** "Create a JSON definition for a fast Scout Unit."
+**Expected Output:**
+```json
+{
+  "name": "Scout",
+  "components": {
+    "Position": { "x": 0, "y": 0 },
+    "Health": { "current": 20, "max": 20 },
+    "UnitState": { "state": "IDLE" },
+    "Physics": { "radius": 0.3, "max_speed": 1.2 }
+  }
+}
+```
 
-### 2. Data-First Logic
-Don't ask the LLM to "write a class for a Tank."
-**Ask:** "Create a JSON definition for a Tank with high armor and slow movement."
-*The engine handles the logic; the LLM handles the data.*
+### 2. The "Manifest"
+Provide the contents of `engine-ts/src/data/schema.ts` to the LLM. This tells it exactly what Components are available (Health, Velocity, etc.) so it doesn't invent fake ones.
 
 ### 3. Simulation vs. Visualization
 Remind the LLM:
@@ -107,7 +116,7 @@ Remind the LLM:
 
 - [x] **Phase 1:** Project Skeleton & Tooling.
 - [x] **Phase 2:** Deterministic Core (RVO, Pathfinding).
-- [ ] **Phase 3:** ECS & State Hydration (bitECS integration).
-- [ ] **Phase 4:** Networking (Lockstep Protocol).
+- [x] **Phase 3:** ECS & State Hydration (bitECS + Zod).
+- [ ] **Phase 4:** Networking (Lockstep Protocol & Input Buffers).
 - [ ] **Phase 5:** Rendering (Three.js InstancedMesh).
 - [ ] **Phase 6:** "Headless" Auto-Balancer.

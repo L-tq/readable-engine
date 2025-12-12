@@ -1,0 +1,21 @@
+{
+  "name": "engine-ts",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@types/node": "^25.0.1",
+    "@types/three": "^0.182.0",
+    "bitecs": "^0.4.0",
+    "three": "^0.182.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.7",
+    "zod": "^4.1.13"
+  }
+}

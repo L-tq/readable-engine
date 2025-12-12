@@ -52,7 +52,7 @@ We have successfully implemented the **Deterministic Core**.
     *   Optimized for complex geometry.
     *   Uses A* on a mesh of triangles, followed by String Pulling (Funnel) to smooth paths.
     *   *Status:* Triangle graph logic and barycentric checks active.
-4.  **HPA* (Hierarchical Pathfinding A*):**
+4.  **HPA\* (Hierarchical Pathfinding A\*):**
     *   Optimized for long-distance grid movement.
     *   Divides map into clusters to speed up calculation.
     *   *Status:* Cluster segmentation structure active.

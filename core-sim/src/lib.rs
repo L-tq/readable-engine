@@ -9,9 +9,25 @@ use crate::pathfinding::flow::FlowField;
 use crate::pathfinding::navmesh::{NavMesh, Triangle};
 use crate::physics::{RvoManager, Agent};
 
+// --- SNAPSHOT STRUCT ---
+// This represents the entire "Save State" of the simulation.
+// We derive Serialize/Deserialize to allow passing it to JS as a JSON-like object.
+#[derive(Serialize, Deserialize)]
+pub struct SimSnapshot {
+    pub tick_count: u64,
+    pub rvo: RvoManager,
+    pub flow_field: FlowField,
+    // NavMesh is included in case we add dynamic terrain modification later.
+    // If NavMesh is static, we could omit it to save bandwidth, 
+    // but for "Vibe Coding" simplicity, we include the whole world state.
+    pub nav_mesh: NavMesh, 
+}
+
+// --- MAIN SIMULATION STRUCT ---
 #[wasm_bindgen]
 pub struct Simulation {
     tick_count: u64,
+    
     // We keep a parallel vector of raw data for fast export to JS
     // Layout: [id, x, y, vel_x, vel_y, ...repeat...]
     export_buffer: Vec<f64>, 
@@ -22,6 +38,7 @@ pub struct Simulation {
     rvo: RvoManager,
 }
 
+// Helper struct for parsing JSON commands from JS
 #[derive(Deserialize)]
 pub struct InputCommand {
     pub id: u32,
@@ -35,15 +52,13 @@ pub struct InputCommand {
 impl Simulation {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Simulation {
-        let mut sim = Simulation {
+        Simulation {
             tick_count: 0,
             export_buffer: Vec::new(),
             flow_field: FlowField::new(100, 100),
             nav_mesh: NavMesh::new(),
             rvo: RvoManager::new(),
-        };
-        // Init dummy NavMesh (omitted for brevity, same as before)
-        sim
+        }
     }
 
     // JS provides the ID now (from bitECS)
@@ -58,38 +73,61 @@ impl Simulation {
         });
     }
 
+    // The Main Deterministic Loop
     pub fn tick(&mut self, input_json: String) {
         self.tick_count += 1;
 
-        // 1. Process Inputs (Same as before)
+        // 1. Process Inputs
+        // We parse the JSON string sent from JS. 
+        // In a real network scenario, this JSON comes from the server "Tick Bundle".
         let inputs: Vec<InputCommand> = serde_json::from_str(&input_json).unwrap_or_default();
+        
         for input in inputs {
-            if input.action == "MOVE" && input.mode.as_deref() == Some("FLOW") {
-                self.flow_field.generate_target(input.target_x, input.target_y);
+            if input.action == "MOVE" {
+                if input.mode.as_deref() == Some("FLOW") {
+                    // Update the global flow field (Dijkstra)
+                    self.flow_field.generate_target(input.target_x, input.target_y);
+                } else {
+                    // Direct unit command (fallback)
+                    self.rvo.update_agent_state(
+                        input.id, 
+                        DVec2::new(input.target_x, input.target_y), // Temporary pos hack
+                        DVec2::ZERO // Reset velocity
+                    );
+                }
             }
         }
 
-        // 2. Pathfinding & Physics (Same logic as before)
+        // 2. Pathfinding (Flow Field Integration)
+        // Every agent looks at the flow field tile underneath them to get their desired direction.
         for i in 0..self.rvo.agents.len() {
             let agent_pos = self.rvo.agents[i].position;
             let flow_dir = self.flow_field.get_direction(agent_pos.x, agent_pos.y);
+            
+            // Set the "Preferred Velocity" for the physics engine
             self.rvo.agents[i].pref_velocity = flow_dir * self.rvo.agents[i].max_speed;
         }
 
+        // 3. Physics (RVO / Collision Avoidance)
+        // We calculate new velocities based on neighbors to avoid overlapping.
         let mut new_velocities = Vec::new();
         for i in 0..self.rvo.agents.len() {
             new_velocities.push(self.rvo.compute_new_velocity(i));
         }
 
-        // 3. Update & Populate Export Buffer
+        // 4. Update State & Populate Export Buffer
+        // We clear the buffer and rebuild it every tick. 
+        // This is O(N), which is very fast for < 10,000 units.
         self.export_buffer.clear();
         
         for (i, vel) in new_velocities.into_iter().enumerate() {
             let agent = &mut self.rvo.agents[i];
+            
+            // Commit the new velocity and move the agent
             agent.velocity = vel;
             agent.position += vel;
 
-            // Push to buffer: [id, x, y, vx, vy]
+            // Push to buffer for JS: [id, x, y, vx, vy]
             self.export_buffer.push(agent.id as f64);
             self.export_buffer.push(agent.position.x);
             self.export_buffer.push(agent.position.y);
@@ -98,12 +136,50 @@ impl Simulation {
         }
     }
 
-    // --- ZERO-COPY INTEROP ---
+    // --- SNAPSHOTS (PHASE 3) ---
 
+    /// Serializes the entire simulation state into a JS Object.
+    /// This uses `serde-wasm-bindgen` to convert Rust structs -> JS Objects.
+    pub fn get_snapshot(&self) -> JsValue {
+        let snap = SimSnapshot {
+            tick_count: self.tick_count,
+            rvo: self.rvo.clone(),             // Requires #[derive(Clone)] on RvoManager
+            flow_field: self.flow_field.clone(), // Requires #[derive(Clone)] on FlowField
+            nav_mesh: self.nav_mesh.clone(),     // Requires #[derive(Clone)] on NavMesh
+        };
+        serde_wasm_bindgen::to_value(&snap).unwrap()
+    }
+
+    /// Restores the simulation state from a JS Object.
+    pub fn load_snapshot(&mut self, val: JsValue) {
+        let snap: SimSnapshot = serde_wasm_bindgen::from_value(val).unwrap();
+        
+        self.tick_count = snap.tick_count;
+        self.rvo = snap.rvo;
+        self.flow_field = snap.flow_field;
+        self.nav_mesh = snap.nav_mesh;
+
+        // CRITICAL: Rebuild the export buffer immediately.
+        // If we don't do this, the JS renderer will read an empty buffer 
+        // for one frame, causing all units to flicker/disappear.
+        self.export_buffer.clear();
+        for agent in &self.rvo.agents {
+            self.export_buffer.push(agent.id as f64);
+            self.export_buffer.push(agent.position.x);
+            self.export_buffer.push(agent.position.y);
+            self.export_buffer.push(agent.velocity.x);
+            self.export_buffer.push(agent.velocity.y);
+        }
+    }
+
+    // --- ZERO-COPY MEMORY INTEROP ---
+
+    /// Returns a pointer to the start of the Float64Array in Wasm memory.
     pub fn get_state_ptr(&self) -> *const f64 {
         self.export_buffer.as_ptr()
     }
 
+    /// Returns the length (element count) of the buffer.
     pub fn get_state_len(&self) -> usize {
         self.export_buffer.len()
     }

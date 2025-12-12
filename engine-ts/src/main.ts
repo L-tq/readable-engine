@@ -1,10 +1,11 @@
-import { createWorld } from 'bitecs';
+import { createWorld, defineQuery, IWorld } from 'bitecs';
 import { SimBridge } from "./core/SimBridge";
 import { GameLoop } from "./core/GameLoop";
 import { Hydrator } from "./core/Hydrator";
-import { Position, Velocity } from "./ecs/components";
+import { StateManager } from "./core/StateManager";
+import { createSyncSystem } from "./systems/SyncSystem";
+import { Position } from "./ecs/components";
 
-// 1. The "LLM" Data (Human Readable)
 const MARINE_DEF = {
     name: "Marine",
     components: {
@@ -16,26 +17,28 @@ const MARINE_DEF = {
 };
 
 async function main() {
-    // Init Core
     const bridge = new SimBridge();
     await bridge.init();
 
-    // Init ECS
     const world = createWorld();
     const hydrator = new Hydrator(world, bridge);
+    const stateManager = new StateManager(world, bridge);
+    const syncSystem = createSyncSystem(bridge);
 
-    // Spawn Units via Hydrator
-    console.log("Creating 25 units from JSON definition...");
+    // Setup UI
+    setupUI(stateManager);
+
+    // Spawn Units
+    console.log("Creating units...");
     for (let i = 0; i < 5; i++) {
         for (let j = 0; j < 5; j++) {
-            // We reuse the Marine Def but override the position
-            hydrator.spawnEntity(MARINE_DEF, { x: 10 + i, y: 10 + j });
+            hydrator.spawnEntity(MARINE_DEF, { x: 10 + (i * 2), y: 10 + (j * 2) });
         }
     }
 
     // Initial Command
     const initialCmd = JSON.stringify([{
-        id: 0, // Global command for demo
+        id: 0,
         action: "MOVE",
         target_x: 50,
         target_y: 50,
@@ -43,58 +46,93 @@ async function main() {
     }]);
     bridge.tick(initialCmd);
 
-    // Renderer
+    // Create a Query for rendering
+    // This efficiently finds all entities with a Position component
+    const renderQuery = defineQuery([Position]);
+
     const render = (alpha: number) => {
-        // 1. Sync Phase: Get Physics Data from Rust and update ECS
-        const buffer = bridge.getStateBuffer();
-        if (buffer) {
-            // Buffer Format: [id, x, y, vx, vy, ...]
-            // Stride = 5
-            for (let i = 0; i < buffer.length; i += 5) {
-                const id = buffer[i];
-                const x = buffer[i + 1];
-                const y = buffer[i + 2];
-                const vx = buffer[i + 3];
-                const vy = buffer[i + 4];
+        // 1. Sync Rust State -> JS ECS
+        syncSystem(world);
 
-                // Update bitECS components
-                // Note: In a real app, do this in a "System", not the render loop
-                Position.x[id] = x;
-                Position.y[id] = y;
-                Velocity.x[id] = vx;
-                Velocity.y[id] = vy;
-            }
-        }
-
-        // 2. Draw Phase (Read from bitECS)
-        const app = document.getElementById('app');
-        if (app) {
-            // We can query bitECS here, but for this demo we'll use the buffer 
-            // to show we are reading from the synced state.
-            let html = `
-                <h1>Readable Engine Phase 3</h1>
-                <p><strong>Status:</strong> ECS + Rust Binary Sync Active</p>
-                <div style="position:relative; width:200px; height:200px; border:1px solid #0f0; background:#000;">
-            `;
-
-            // Query all entities with Position
-            // (Using the buffer for easy iteration in this snippet, 
-            // normally we would use bitECS query loop)
-            if (buffer) {
-                for (let i = 0; i < buffer.length; i += 5) {
-                    const x = buffer[i + 1];
-                    const y = buffer[i + 2];
-                    html += `<div style="position:absolute; left:${x * 2}px; top:${y * 2}px; width:4px; height:4px; background:#0f0;"></div>`;
-                }
-            }
-
-            html += `</div>`;
-            app.innerHTML = html;
-        }
+        // 2. Render
+        drawWorld(world, renderQuery);
     };
 
     const gameLoop = new GameLoop(bridge, render);
     gameLoop.start();
+}
+
+function setupUI(stateManager: StateManager) {
+    const app = document.getElementById('app');
+    if (!app) return;
+
+    app.innerHTML = `
+        <div style="margin-bottom: 10px; font-family: sans-serif;">
+            <div style="margin-bottom: 5px;">
+                <strong>Readable Engine: Phase 3 (State & Data)</strong>
+            </div>
+            <button id="btn-save">💾 Save Snapshot</button>
+            <button id="btn-load">📂 Load Snapshot</button>
+            <button id="btn-add">➕ Add Random Unit</button>
+            <span id="status" style="margin-left: 10px; color: #888;">System Ready</span>
+        </div>
+        <canvas id="game-canvas" width="600" height="400" style="border: 1px solid #333; background: #000;"></canvas>
+    `;
+
+    let savedState: any = null;
+    const status = document.getElementById('status')!;
+
+    document.getElementById('btn-save')?.addEventListener('click', () => {
+        savedState = stateManager.createSnapshot();
+        console.log("State Saved:", savedState);
+        status.innerText = `Saved ${savedState.ecs.entities.length} entities @ T=${savedState.timestamp}`;
+        status.style.color = '#0f0';
+    });
+
+    document.getElementById('btn-load')?.addEventListener('click', () => {
+        if (savedState) {
+            stateManager.loadSnapshot(savedState);
+            status.innerText = "State Loaded";
+            status.style.color = '#0f0';
+        } else {
+            status.innerText = "No save found";
+            status.style.color = '#f00';
+        }
+    });
+}
+
+function drawWorld(world: IWorld, query: (w: IWorld) => number[]) {
+    const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Grid
+    ctx.strokeStyle = '#222';
+    ctx.beginPath();
+    for (let i = 0; i < 600; i += 20) { ctx.moveTo(i, 0); ctx.lineTo(i, 400); }
+    for (let i = 0; i < 400; i += 20) { ctx.moveTo(0, i); ctx.lineTo(600, i); }
+    ctx.stroke();
+
+    ctx.fillStyle = '#0f0';
+
+    // Execute Query to get active entity IDs
+    const entities = query(world);
+
+    for (let i = 0; i < entities.length; i++) {
+        const id = entities[i];
+        const x = Position.x[id] * 4; // Scale for visibility
+        const y = Position.y[id] * 4;
+
+        ctx.fillRect(x - 2, y - 2, 4, 4);
+
+        // Optional: Draw ID for debugging
+        // ctx.fillStyle = '#fff';
+        // ctx.fillText(id.toString(), x + 5, y);
+        // ctx.fillStyle = '#0f0';
+    }
 }
 
 main();

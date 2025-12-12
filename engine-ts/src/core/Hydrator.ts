@@ -1,5 +1,5 @@
 import { addEntity, addComponent, IWorld } from 'bitecs';
-import { EntityDef, EntityDefSchema } from '../data/schema';
+import { EntityDefSchema } from '../data/schema';
 import { Registry } from '../ecs/Registry';
 import { SimBridge } from './SimBridge';
 
@@ -10,44 +10,43 @@ export class Hydrator {
      * Spawns an entity from a JSON definition.
      */
     spawnEntity(jsonDef: any, overridePos?: { x: number, y: number }): number {
-        // 1. Validate Schema (Safety Rail for LLM)
+        // 1. Validate Schema
         const result = EntityDefSchema.safeParse(jsonDef);
         if (!result.success) {
-            console.warn(`[Hydrator] Failed to spawn ${jsonDef.name || 'Unknown'}:`, result.error);
+            console.warn(`[Hydrator] Schema Validation Failed for ${jsonDef.name}:`, result.error);
             return -1;
         }
 
         const def = result.data;
         const eid = addEntity(this.world);
 
-        // 2. Iterate Components
+        // 2. Iterate Defined Components
         for (const [key, value] of Object.entries(def.components)) {
-            if (!value) continue;
+            if (value === undefined || value === null) continue;
 
-            // Handle "Physics" specially (It lives in Rust)
+            // SPECIAL: Physics
+            // Physics is not a JS component, it's a request to the Rust Core.
             if (key === 'Physics' && def.components.Position) {
                 const pos = overridePos || def.components.Position;
-                const phys = def.components.Physics!;
+                const phys = def.components.Physics!; // Schema guarantees presence if key exists
 
-                // Send to Rust: ID, x, y, radius, speed
+                // Send to Rust
                 this.bridge.addAgent(eid, pos.x, pos.y, phys.radius, phys.max_speed);
                 continue;
             }
 
-            // Handle Standard ECS Components
+            // STANDARD: JS Components
             const regEntry = Registry.get(key);
             if (regEntry) {
                 addComponent(this.world, regEntry.component, eid);
 
-                // Apply overrides if needed
+                // Determine data (Override position if provided)
                 let data = value;
                 if (key === 'Position' && overridePos) {
                     data = overridePos;
                 }
 
                 regEntry.setter(this.world, eid, data);
-            } else {
-                console.warn(`[Hydrator] Warning: Component '${key}' not found in Registry.`);
             }
         }
 

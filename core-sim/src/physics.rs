@@ -1,6 +1,7 @@
 use glam::DVec2;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct Agent {
     pub id: u32,
     pub position: DVec2,
@@ -10,6 +11,7 @@ pub struct Agent {
     pub pref_velocity: DVec2, // The velocity the pathfinder WANTS
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RvoManager {
     pub agents: Vec<Agent>,
 }
@@ -21,6 +23,11 @@ impl RvoManager {
 
     pub fn add_agent(&mut self, agent: Agent) {
         self.agents.push(agent);
+    }
+
+    /// Clears all agents. Used when loading a snapshot.
+    pub fn clear(&mut self) {
+        self.agents.clear();
     }
 
     pub fn update_agent_state(&mut self, id: u32, pos: DVec2, pref_vel: DVec2) {
@@ -36,7 +43,7 @@ impl RvoManager {
         let agent = self.agents[agent_idx];
         let mut new_vel = agent.pref_velocity;
 
-        // In a real engine, use a QuadTree here. For <500 units, O(N^2) is acceptable in Wasm.
+        // In a real engine, use a QuadTree/Grid here. For <500 units, O(N^2) is acceptable in Wasm.
         for (i, other) in self.agents.iter().enumerate() {
             if i == agent_idx { continue; }
 

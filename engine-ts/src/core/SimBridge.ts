@@ -1,7 +1,5 @@
 import init, { Simulation } from "../../../core-sim/pkg/core_sim";
 
-// We need to access the WASM memory buffer directly
-// vite-plugin-wasm usually exposes the instance, or we can grab it from the init result
 let wasmMemory: WebAssembly.Memory;
 
 export class SimBridge {
@@ -11,11 +9,10 @@ export class SimBridge {
     async init() {
         if (this.initialized) return;
         const wasmResult = await init();
-        wasmMemory = wasmResult.memory; // Grab memory reference
-
+        wasmMemory = wasmResult.memory;
         this.sim = new Simulation();
         this.initialized = true;
-        console.log("🦀 Rust Core Initialized (Binary Mode)");
+        console.log("🦀 Rust Core Initialized");
     }
 
     addAgent(id: number, x: number, y: number, radius: number, speed: number) {
@@ -28,8 +25,9 @@ export class SimBridge {
     }
 
     /**
-     * Reads the raw Float64Array from Wasm memory.
-     * Returns a view, not a copy (mostly).
+     * PRODUCTION FIX: Wasm memory can grow (resize). 
+     * When it does, old ArrayBuffers become detached (length 0).
+     * We must check and grab the new buffer if that happens.
      */
     getStateBuffer(): Float64Array | null {
         if (!this.sim) return null;
@@ -37,8 +35,25 @@ export class SimBridge {
         const ptr = this.sim.get_state_ptr();
         const len = this.sim.get_state_len();
 
-        // Create a view into the WASM memory
-        // Note: This view is valid only until the next WASM allocation (tick)
+        if (len === 0) return new Float64Array(0);
+
+        // Check for detached buffer
+        if (wasmMemory.buffer.byteLength === 0) {
+            // In a real scenario, we might need to re-fetch the memory export from the instance
+            // But usually, wasmMemory.buffer updates automatically unless we held a ref to .buffer
+            console.warn("Wasm memory detached!");
+        }
+
         return new Float64Array(wasmMemory.buffer, ptr, len);
+    }
+
+    // --- SNAPSHOTS ---
+
+    getSnapshot(): any {
+        return this.sim?.get_snapshot();
+    }
+
+    loadSnapshot(data: any) {
+        this.sim?.load_snapshot(data);
     }
 }

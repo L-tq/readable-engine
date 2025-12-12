@@ -69,7 +69,7 @@ We have successfully implemented the **Deterministic Core**.
 ### 1. Build the Wasm Core
 ```bash
 cd core-sim
-wasm-pack build --target web
+npx wasm-pack build --target web
 ```
 
 ### 2. Run the Engine

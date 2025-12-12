@@ -2,10 +2,11 @@
 .DS_Store
 Thumbs.db
 
-# Rust (core-sim)
+# Rust 
 target/
-**/*.rs.bk
+**/*.bk
 *.pdb
+pkg/
 
 # Node/TypeScript (engine-ts)
 node_modules/

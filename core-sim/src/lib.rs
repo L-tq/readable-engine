@@ -73,6 +73,9 @@ impl Simulation {
             max_speed,
             pref_velocity: DVec2::ZERO,
         });
+        
+        // --- FIX: Rebuild buffer immediately so renderer sees unit on frame 0 ---
+        self.rebuild_export_buffer();
     }
 
     // The Main Deterministic Loop

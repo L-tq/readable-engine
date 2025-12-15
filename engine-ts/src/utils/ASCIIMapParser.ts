@@ -36,13 +36,10 @@ export class ASCIIMapParser {
         const offsetY = (height * this.cellSize) / 2;
 
         // Determine World Bounds (Sim Y maps to 3D Z)
-        // Min/Max X is straightforward
         const minX = -offsetX;
         const maxX = offsetX;
 
-        // Min/Max Z corresponds to Sim Y range
-        // Row 0 -> Y = offsetY (Max Z / Bottom of Screen)
-        // Row Max -> Y = -offsetY (Min Z / Top of Screen)
+        // FIX: Invert Z logic so Row 0 is Top (North/-Z) and Row Max is Bottom (South/+Z)
         const minZ = -offsetY;
         const maxZ = offsetY;
 
@@ -61,7 +58,10 @@ export class ASCIIMapParser {
 
                 // 2. Calculate World Position
                 const x = (col * this.cellSize) - offsetX;
-                const y = -((row * this.cellSize) - offsetY);
+
+                // FIX: Row 0 should be at -offsetY (North), Row Max at +offsetY (South)
+                // We use standard reading order: Top line = Top of world.
+                const y = (row * this.cellSize) - offsetY;
 
                 // 3. Spawn
                 const eid = this.hydrator.spawnEntity(prefab, { x, y });

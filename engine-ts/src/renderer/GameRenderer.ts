@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { IWorld, defineQuery } from 'bitecs';
+import { IWorld, defineQuery, hasComponent } from 'bitecs';
 import { Position, PrevPosition, Renderable } from '../ecs/components';
 import { Assets } from './AssetManager';
 
@@ -89,9 +89,15 @@ export class GameRenderer {
                 const currX = Position.x[eid];
                 const currY = Position.y[eid];
 
-                // If PrevPosition doesn't exist yet (first frame), use Current
-                const prevX = PrevPosition.x[eid] ?? currX;
-                const prevY = PrevPosition.y[eid] ?? currY;
+                // FIX: Check if component exists explicitly.
+                // TypedArrays always return 0 for indices, so `??` logic fails here.
+                let prevX = currX;
+                let prevY = currY;
+
+                if (hasComponent(world, PrevPosition, eid)) {
+                    prevX = PrevPosition.x[eid];
+                    prevY = PrevPosition.y[eid];
+                }
 
                 const x = prevX + (currX - prevX) * alpha;
                 const z = prevY + (currY - prevY) * alpha; // Map Sim Y to 3D Z

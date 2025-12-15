@@ -2,13 +2,11 @@ import { addEntity, addComponent, IWorld } from 'bitecs';
 import { EntityDefSchema } from '../data/schema';
 import { Registry } from '../ecs/Registry';
 import { SimBridge } from './SimBridge';
+import { Position } from '../ecs/components'; // Import Position directly
 
 export class Hydrator {
     constructor(private world: IWorld, private bridge: SimBridge) { }
 
-    /**
-     * Spawns an entity from a JSON definition.
-     */
     spawnEntity(jsonDef: any, overridePos?: { x: number, y: number }): number {
         // 1. Validate Schema
         const result = EntityDefSchema.safeParse(jsonDef);
@@ -20,18 +18,29 @@ export class Hydrator {
         const def = result.data;
         const eid = addEntity(this.world);
 
+        // --- FIX: Explicitly handle Position if override is provided ---
+        // Even if the JSON doesn't have "Position", we must add it if we are spawning into the world.
+        if (overridePos) {
+            addComponent(this.world, Position, eid);
+            Position.x[eid] = overridePos.x;
+            Position.y[eid] = overridePos.y;
+        }
+
         // 2. Iterate Defined Components
         for (const [key, value] of Object.entries(def.components)) {
             if (value === undefined || value === null) continue;
 
-            // SPECIAL: Physics
-            // Physics is not a JS component, it's a request to the Rust Core.
-            if (key === 'Physics' && def.components.Position) {
-                const pos = overridePos || def.components.Position;
-                const phys = def.components.Physics!; // Schema guarantees presence if key exists
+            // Skip Position in the loop if we already handled it via override
+            if (key === 'Position' && overridePos) continue;
 
-                // Send to Rust
-                this.bridge.addAgent(eid, pos.x, pos.y, phys.radius, phys.max_speed);
+            // SPECIAL: Physics
+            if (key === 'Physics') {
+                // Use override position or default to 0,0
+                const posX = overridePos?.x ?? (def.components.Position?.x || 0);
+                const posY = overridePos?.y ?? (def.components.Position?.y || 0);
+
+                const phys = def.components.Physics!;
+                this.bridge.addAgent(eid, posX, posY, phys.radius, phys.max_speed);
                 continue;
             }
 
@@ -39,14 +48,7 @@ export class Hydrator {
             const regEntry = Registry.get(key);
             if (regEntry) {
                 addComponent(this.world, regEntry.component, eid);
-
-                // Determine data (Override position if provided)
-                let data = value;
-                if (key === 'Position' && overridePos) {
-                    data = overridePos;
-                }
-
-                regEntry.setter(this.world, eid, data);
+                regEntry.setter(this.world, eid, value);
             }
         }
 

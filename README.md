@@ -24,26 +24,33 @@ The "Black Box" of the engine. It handles the heavy lifting where binary determi
 The "Glue" that connects the simulation to the browser.
 *   **ECS (Entity Component System):** Uses **bitECS** for high-performance memory layout.
 *   **The Hydrator:** A system that converts human-readable JSON into binary ECS arrays.
-*   **Game Loop:** Accumulator-based fixed timestep loop (15-20 TPS).
+*   **Game Loop:** Accumulator-based fixed timestep loop (15 TPS).
 *   **Rendering:** Three.js (Interpolated state for smooth 60fps visuals).
 
-### 3. The Data (`/game-data`) - JSON 📄
+### 3. The Network (`/engine-ts/network`) - Virtual Server 🌐
+The engine uses a **Virtual Server Pattern** to decouple game logic from transport.
+*   **Lockstep Manager:** Buffers inputs and pauses the simulation if the "Tick Bundle" for the current turn hasn't arrived.
+*   **Adapters:**
+    *   `LocalAdapter`: Runs a local "Virtual Server" that ticks every 66ms. Used for Single Player & Development.
+    *   `GeckosAdapter`: Uses **WebRTC** (via Geckos.io) for high-performance UDP networking.
+
+### 4. The Data (`/game-data`) - JSON 📄
 The "Interface" for the LLM.
 *   **Zod Schemas:** Strict validation ensures the LLM doesn't "hallucinate" invalid properties.
 *   **Usage:** Units are defined purely as data.
 
 ---
 
-## 🚀 Current Status: Phase 3 (State & Data)
+## 🚀 Current Status: Phase 4 (Networking)
 
-We have successfully implemented the **ECS & Data Layer**.
+We have successfully implemented the **Networking & Lockstep Layer**.
 
 ### ✅ Implemented Features:
+*   **Virtual Server:** `LocalAdapter` simulates server authority and latency for robust single-player testing.
+*   **Lockstep Protocol:** Deterministic input execution with "Playout Delay" to mask network jitter.
 *   **RVO & Flow Fields:** Deterministic pathfinding in Rust.
 *   **bitECS Integration:** High-performance SoA (Structure of Arrays) in TypeScript.
-*   **The Hydrator:** Spawns entities from JSON definitions.
 *   **Binary Sync:** Zero-copy memory transfer from Rust Physics -> TypeScript ECS.
-*   **Zod Validation:** Runtime schema checking for entity definitions.
 
 ---
 
@@ -77,7 +84,9 @@ Start the Vite development server.
 npm run dev
 ```
 
-Open `http://localhost:5173` (or the port shown in terminal) to see the simulation.
+### Networking Modes
+*   **Single Player (Default):** Uses `LocalAdapter`. Just open the URL.
+*   **Multiplayer (Geckos.io):** Append `?net` to the URL (e.g., `http://localhost:5173/?net`). *Note: Requires a running Geckos.io server instance.*
 
 ---
 
@@ -117,6 +126,7 @@ Remind the LLM:
 - [x] **Phase 1:** Project Skeleton & Tooling.
 - [x] **Phase 2:** Deterministic Core (RVO, Pathfinding).
 - [x] **Phase 3:** ECS & State Hydration (bitECS + Zod).
-- [ ] **Phase 4:** Networking (Lockstep Protocol & Input Buffers).
+- [x] **Phase 4:** Networking (Lockstep Protocol & Input Buffers).
 - [ ] **Phase 5:** Rendering (Three.js InstancedMesh).
 - [ ] **Phase 6:** "Headless" Auto-Balancer.
+```

@@ -11,6 +11,8 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
+    "@geckos.io/client": "^3.0.2",
+    "@geckos.io/server": "^3.0.2",
     "bitecs": "^0.3.40",
     "three": "^0.160.0",
     "zod": "^3.22.4"

@@ -5,40 +5,56 @@ import { Hydrator } from "./core/Hydrator";
 import { StateManager } from "./core/StateManager";
 import { createSyncSystem } from "./systems/SyncSystem";
 import { Position } from "./ecs/components";
+import { EntityDef } from './data/schema';
 
-const MARINE_DEF = {
-    name: "Marine",
-    components: {
-        Position: { x: 0, y: 0 },
-        Health: { current: 50, max: 50 },
-        UnitState: { state: "IDLE" },
-        Physics: { radius: 0.5, max_speed: 0.5 }
+// --- DATA DEFINITIONS (The "Vibe" Layer) ---
+// In a full app, these would be loaded from JSON files in /game-data
+const UNITS: Record<string, EntityDef> = {
+    "Marine": {
+        name: "Marine",
+        components: {
+            Position: { x: 0, y: 0 },
+            Health: { current: 50, max: 50 },
+            UnitState: { state: "IDLE" },
+            Physics: { radius: 0.5, max_speed: 0.5 } // Fast, small
+        }
+    },
+    "Tank": {
+        name: "Tank",
+        components: {
+            Position: { x: 0, y: 0 },
+            Health: { current: 150, max: 150 },
+            UnitState: { state: "IDLE" },
+            Physics: { radius: 0.8, max_speed: 0.25 } // Slow, big
+        }
     }
 };
 
 async function main() {
+    // 1. Initialize the Wasm Bridge
     const bridge = new SimBridge();
     await bridge.init();
 
+    // 2. Initialize ECS and Managers
     const world = createWorld();
     const hydrator = new Hydrator(world, bridge);
     const stateManager = new StateManager(world, bridge);
     const syncSystem = createSyncSystem(bridge);
 
-    // Setup UI
-    setupUI(stateManager);
+    // 3. Setup UI for Vibe Coding / Debugging
+    setupUI(stateManager, hydrator);
 
-    // Spawn Units
-    console.log("Creating units...");
+    // 4. Initial Spawn (Create a Squad)
+    console.log("[Main] Spawning initial squad...");
     for (let i = 0; i < 5; i++) {
-        for (let j = 0; j < 5; j++) {
-            hydrator.spawnEntity(MARINE_DEF, { x: 10 + (i * 2), y: 10 + (j * 2) });
-        }
+        // Spawn Marines in a line
+        hydrator.spawnEntity(UNITS["Marine"], { x: 10 + (i * 2), y: 10 });
     }
 
-    // Initial Command
+    // 5. Send Initial Command (Move to center)
+    // Note: In a real game, this happens via the Network/Input system
     const initialCmd = JSON.stringify([{
-        id: 0,
+        id: 0, // Note: This ID is brittle! In a real engine, we select by Entity ID dynamically.
         action: "MOVE",
         target_x: 50,
         target_y: 50,
@@ -46,93 +62,133 @@ async function main() {
     }]);
     bridge.tick(initialCmd);
 
-    // Create a Query for rendering
-    // This efficiently finds all entities with a Position component
+    // 6. Setup Rendering
+    // Query all entities that have a Position (and thus are visible)
     const renderQuery = defineQuery([Position]);
 
     const render = (alpha: number) => {
-        // 1. Sync Rust State -> JS ECS
+        // A. Sync Physics State (Rust -> JS)
         syncSystem(world);
 
-        // 2. Render
+        // B. Draw
         drawWorld(world, renderQuery);
     };
 
+    // 7. Start Game Loop
     const gameLoop = new GameLoop(bridge, render);
     gameLoop.start();
 }
 
-function setupUI(stateManager: StateManager) {
+/**
+ * Sets up the HTML UI for testing Phase 3 features.
+ */
+function setupUI(stateManager: StateManager, hydrator: Hydrator) {
     const app = document.getElementById('app');
     if (!app) return;
 
     app.innerHTML = `
-        <div style="margin-bottom: 10px; font-family: sans-serif;">
-            <div style="margin-bottom: 5px;">
+        <div style="margin-bottom: 10px; font-family: 'Segoe UI', monospace; background: #1a1a1a; padding: 15px; border-radius: 8px; border: 1px solid #333;">
+            <div style="margin-bottom: 15px; color: #fff; font-size: 1.1em;">
                 <strong>Readable Engine: Phase 3 (State & Data)</strong>
             </div>
-            <button id="btn-save">💾 Save Snapshot</button>
-            <button id="btn-load">📂 Load Snapshot</button>
-            <button id="btn-add">➕ Add Random Unit</button>
-            <span id="status" style="margin-left: 10px; color: #888;">System Ready</span>
+            
+            <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+                <button id="btn-save" style="padding: 8px 12px; cursor: pointer; background: #333; color: white; border: 1px solid #555;">💾 Save Snapshot</button>
+                <button id="btn-load" style="padding: 8px 12px; cursor: pointer; background: #333; color: white; border: 1px solid #555;">📂 Load Snapshot</button>
+            </div>
+            
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <button id="btn-marine" style="padding: 5px 10px; cursor: pointer; background: #004400; color: #afa; border: none;">+ Marine</button>
+                <button id="btn-tank" style="padding: 5px 10px; cursor: pointer; background: #000044; color: #aaf; border: none;">+ Tank</button>
+                <span id="status" style="margin-left: auto; color: #888; font-size: 0.9em;">System Ready</span>
+            </div>
         </div>
-        <canvas id="game-canvas" width="600" height="400" style="border: 1px solid #333; background: #000;"></canvas>
+        <canvas id="game-canvas" width="800" height="600" style="border: 1px solid #333; background: #000; display: block;"></canvas>
     `;
 
     let savedState: any = null;
     const status = document.getElementById('status')!;
 
+    // SAVE
     document.getElementById('btn-save')?.addEventListener('click', () => {
         savedState = stateManager.createSnapshot();
         console.log("State Saved:", savedState);
         status.innerText = `Saved ${savedState.ecs.entities.length} entities @ T=${savedState.timestamp}`;
-        status.style.color = '#0f0';
+        status.style.color = '#4f4';
     });
 
+    // LOAD
     document.getElementById('btn-load')?.addEventListener('click', () => {
         if (savedState) {
             stateManager.loadSnapshot(savedState);
-            status.innerText = "State Loaded";
-            status.style.color = '#0f0';
+            status.innerText = "State Loaded & IDs Remapped";
+            status.style.color = '#4f4';
         } else {
-            status.innerText = "No save found";
-            status.style.color = '#f00';
+            status.innerText = "No save in memory";
+            status.style.color = '#f44';
         }
+    });
+
+    // SPAWN MARINE
+    document.getElementById('btn-marine')?.addEventListener('click', () => {
+        hydrator.spawnEntity(UNITS["Marine"], {
+            x: Math.random() * 80 + 10,
+            y: Math.random() * 80 + 10
+        });
+    });
+
+    // SPAWN TANK
+    document.getElementById('btn-tank')?.addEventListener('click', () => {
+        hydrator.spawnEntity(UNITS["Tank"], {
+            x: Math.random() * 80 + 10,
+            y: Math.random() * 80 + 10
+        });
     });
 }
 
+/**
+ * Simple 2D Canvas Renderer for debugging.
+ */
 function drawWorld(world: IWorld, query: (w: IWorld) => number[]) {
     const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    // Clear Screen
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Grid
+    // Draw Grid (every 40 units)
     ctx.strokeStyle = '#222';
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    for (let i = 0; i < 600; i += 20) { ctx.moveTo(i, 0); ctx.lineTo(i, 400); }
-    for (let i = 0; i < 400; i += 20) { ctx.moveTo(0, i); ctx.lineTo(600, i); }
+    const scale = 4; // Visual scale (1 sim unit = 4 pixels)
+
+    for (let i = 0; i < canvas.width; i += 40) { ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height); }
+    for (let i = 0; i < canvas.height; i += 40) { ctx.moveTo(0, i); ctx.lineTo(canvas.width, i); }
     ctx.stroke();
 
-    ctx.fillStyle = '#0f0';
-
-    // Execute Query to get active entity IDs
+    // Draw Entities
     const entities = query(world);
 
     for (let i = 0; i < entities.length; i++) {
         const id = entities[i];
-        const x = Position.x[id] * 4; // Scale for visibility
-        const y = Position.y[id] * 4;
 
-        ctx.fillRect(x - 2, y - 2, 4, 4);
+        // Get Position (Synced from Rust)
+        const x = Position.x[id] * scale;
+        const y = Position.y[id] * scale;
 
-        // Optional: Draw ID for debugging
-        // ctx.fillStyle = '#fff';
-        // ctx.fillText(id.toString(), x + 5, y);
-        // ctx.fillStyle = '#0f0';
+        // Draw Unit Body
+        ctx.fillStyle = '#0f0';
+        ctx.fillRect(x - 3, y - 3, 6, 6);
+
+        // Draw Debug Info (ID)
+        // This is crucial to verify that ID remapping works. 
+        // If IDs desync, the box will move but the text might stay or flicker.
+        ctx.fillStyle = '#fff';
+        ctx.font = '10px monospace';
+        ctx.fillText(`${id}`, x + 5, y - 5);
     }
 }
 
-main();
+main().catch(console.error);

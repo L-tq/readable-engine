@@ -5,6 +5,7 @@ mod physics;
 use wasm_bindgen::prelude::*;
 use serde::{Deserialize, Serialize};
 use glam::DVec2;
+use std::collections::HashMap;
 use crate::pathfinding::flow::FlowField;
 use crate::pathfinding::navmesh::{NavMesh, Triangle};
 use crate::physics::{RvoManager, Agent};
@@ -18,8 +19,6 @@ pub struct SimSnapshot {
     pub rvo: RvoManager,
     pub flow_field: FlowField,
     // NavMesh is included in case we add dynamic terrain modification later.
-    // If NavMesh is static, we could omit it to save bandwidth, 
-    // but for "Vibe Coding" simplicity, we include the whole world state.
     pub nav_mesh: NavMesh, 
 }
 
@@ -52,6 +51,9 @@ pub struct InputCommand {
 impl Simulation {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Simulation {
+        // Panic hook for better error logging in browser console
+        console_error_panic_hook::set_once();
+
         Simulation {
             tick_count: 0,
             export_buffer: Vec::new(),
@@ -115,25 +117,15 @@ impl Simulation {
             new_velocities.push(self.rvo.compute_new_velocity(i));
         }
 
-        // 4. Update State & Populate Export Buffer
-        // We clear the buffer and rebuild it every tick. 
-        // This is O(N), which is very fast for < 10,000 units.
-        self.export_buffer.clear();
-        
+        // 4. Update State
         for (i, vel) in new_velocities.into_iter().enumerate() {
             let agent = &mut self.rvo.agents[i];
-            
-            // Commit the new velocity and move the agent
             agent.velocity = vel;
             agent.position += vel;
-
-            // Push to buffer for JS: [id, x, y, vx, vy]
-            self.export_buffer.push(agent.id as f64);
-            self.export_buffer.push(agent.position.x);
-            self.export_buffer.push(agent.position.y);
-            self.export_buffer.push(agent.velocity.x);
-            self.export_buffer.push(agent.velocity.y);
         }
+
+        // 5. Populate Export Buffer
+        self.rebuild_export_buffer();
     }
 
     // --- SNAPSHOTS (PHASE 3) ---
@@ -162,14 +154,34 @@ impl Simulation {
         // CRITICAL: Rebuild the export buffer immediately.
         // If we don't do this, the JS renderer will read an empty buffer 
         // for one frame, causing all units to flicker/disappear.
-        self.export_buffer.clear();
-        for agent in &self.rvo.agents {
-            self.export_buffer.push(agent.id as f64);
-            self.export_buffer.push(agent.position.x);
-            self.export_buffer.push(agent.position.y);
-            self.export_buffer.push(agent.velocity.x);
-            self.export_buffer.push(agent.velocity.y);
+        self.rebuild_export_buffer();
+    }
+
+    // --- ID REMAPPING (PHASE 3 FIX) ---
+
+    /// Updates Agent IDs to match a new set of IDs provided by JS.
+    /// This is required after loading a snapshot, as bitECS will assign new internal IDs.
+    pub fn remap_ids(&mut self, old_ids: &[u32], new_ids: &[u32]) {
+        if old_ids.len() != new_ids.len() {
+            // In production, you might want to log an error or return a Result
+            return;
         }
+
+        // Build a lookup map: Old ID -> New ID
+        let mut map = HashMap::new();
+        for (i, &old_id) in old_ids.iter().enumerate() {
+            map.insert(old_id, new_ids[i]);
+        }
+
+        // Apply to all agents
+        for agent in &mut self.rvo.agents {
+            if let Some(&new_id) = map.get(&agent.id) {
+                agent.id = new_id;
+            }
+        }
+
+        // Rebuild buffer so the very next render call uses the correct new IDs
+        self.rebuild_export_buffer();
     }
 
     // --- ZERO-COPY MEMORY INTEROP ---
@@ -182,5 +194,23 @@ impl Simulation {
     /// Returns the length (element count) of the buffer.
     pub fn get_state_len(&self) -> usize {
         self.export_buffer.len()
+    }
+
+    // --- INTERNAL HELPERS ---
+
+    fn rebuild_export_buffer(&mut self) {
+        self.export_buffer.clear();
+        
+        // Ensure capacity to prevent frequent reallocations
+        // 5 floats per agent: [id, x, y, vx, vy]
+        self.export_buffer.reserve(self.rvo.agents.len() * 5);
+
+        for agent in &self.rvo.agents {
+            self.export_buffer.push(agent.id as f64);
+            self.export_buffer.push(agent.position.x);
+            self.export_buffer.push(agent.position.y);
+            self.export_buffer.push(agent.velocity.x);
+            self.export_buffer.push(agent.velocity.y);
+        }
     }
 }

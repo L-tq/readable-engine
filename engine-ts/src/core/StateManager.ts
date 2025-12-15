@@ -1,4 +1,4 @@
-import { IWorld, getAllEntities, removeEntity, addEntity, addComponent } from 'bitecs';
+import { IWorld, getAllEntities, removeEntity, addEntity, addComponent, hasComponent } from 'bitecs';
 import { SimBridge } from './SimBridge';
 import { Registry } from '../ecs/Registry';
 
@@ -36,33 +36,31 @@ export class StateManager {
 
         for (const eid of eids) {
             const componentData: Record<string, any> = {};
+            let hasData = false;
 
             // Iterate ALL registered components to see if this entity has them
             for (const entry of registeredComponents) {
-                // Check if the entity has this component type (using bitECS internal check logic implied by queries, 
-                // but for single entities we check if data exists or use hasComponent if available)
-
-                // Note: bitECS doesn't have a cheap `hasComponent` without a query in some versions,
-                // but checking the underlying array or using try/catch is common. 
-                // Here we assume the serializer handles 0/null values or we check existence.
-
-                // For this implementation, we simply serialize. If it returns 0/default and that's valid, we save it.
-                // A better approach is `if (hasComponent(world, entry.component, eid))`
-                // We will assume hasComponent is imported or available.
-
-                // Optimization: In a real engine, use a mask check.
-                try {
-                    const data = entry.serializer(this.world, eid);
-                    componentData[entry.name] = data;
-                } catch (e) {
-                    // Component likely not present or error
+                // Optimization: Only attempt to save components the entity actually possesses.
+                // This prevents saving thousands of default/empty components.
+                if (hasComponent(this.world, entry.component, eid)) {
+                    try {
+                        const data = entry.serializer(this.world, eid);
+                        componentData[entry.name] = data;
+                        hasData = true;
+                    } catch (e) {
+                        console.warn(`[StateManager] Failed to serialize '${entry.name}' for entity ${eid}`, e);
+                    }
                 }
             }
 
-            entities.push({
-                id: eid,
-                components: componentData
-            });
+            // Only save entities that actually have game data
+            // (This implicitly filters out any ghost entities if they exist)
+            if (hasData) {
+                entities.push({
+                    id: eid,
+                    components: componentData
+                });
+            }
         }
 
         return {
@@ -79,49 +77,48 @@ export class StateManager {
         console.log(`[StateManager] Loading Snapshot from t=${snap.timestamp}`);
 
         // 1. Clear JS ECS
+        // We must remove all existing entities to prevent ID collisions or ghost units.
         const currentEids = getAllEntities(this.world);
         for (const eid of currentEids) {
             removeEntity(this.world, eid);
         }
 
         // 2. Restore Rust State
-        // Rust now thinks agents have IDs from the snapshot (e.g., 5, 12).
+        // At this point, Rust has restored its Agents with their OLD IDs (e.g., ID 5, ID 12).
         this.bridge.loadSnapshot(snap.sim);
 
-        // 3. Restore JS ECS & Remap IDs
-        // We cannot guarantee bitECS will give us the same IDs. 
+        // 3. Restore JS ECS & Track ID Mapping
+        // bitECS will generate NEW IDs (e.g., ID 100, ID 101) because we are adding entities fresh.
         // We must map [Snapshot ID] -> [New Runtime ID].
-        const idMap = new Map<number, number>();
+        const oldIds: number[] = [];
+        const newIds: number[] = [];
 
         for (const entSnap of snap.ecs.entities) {
             const newEid = addEntity(this.world);
-            idMap.set(entSnap.id, newEid);
+
+            // Track the mapping for the Rust update step
+            oldIds.push(entSnap.id);
+            newIds.push(newEid);
 
             // Hydrate Components
             for (const [compName, compData] of Object.entries(entSnap.components)) {
                 const regEntry = Registry.get(compName);
+
+                // Only add component if it exists in our registry
                 if (regEntry) {
                     addComponent(this.world, regEntry.component, newEid);
                     regEntry.setter(this.world, newEid, compData);
+                } else {
+                    console.warn(`[StateManager] Snapshot contains unknown component: '${compName}'. Skipping.`);
                 }
             }
         }
 
-        // 4. Sync Rust IDs
-        // The Rust simulation currently holds the OLD IDs. We need to tell Rust:
-        // "Hey, Agent 5 is now Agent 10."
-        // We need a new method in SimBridge/Rust for this, or we rely on the fact that
-        // if we are strictly deterministic and cleared the world, IDs *might* align.
-        // BUT, for a robust engine, we must update Rust.
+        // 4. Sync Rust IDs (Critical Step)
+        // We must tell the Rust simulation that "Agent 5 is now Agent 100".
+        // We pass TypedArrays to Wasm for zero-overhead copying.
+        this.bridge.remapIds(new Uint32Array(oldIds), new Uint32Array(newIds));
 
-        // For Phase 3, we will assume we need to re-inform Rust of the mapping.
-        // Since we haven't implemented `update_agent_id` in Rust yet, we will use a workaround:
-        // We will maintain the IDs if possible, but if not, we log a warning.
-
-        // TODO (Phase 4): Implement `sim.remap_ids(old_ids: [], new_ids: [])` in Rust.
-        // For now, we assume the snapshot loading in Rust is sufficient, but visual syncing
-        // (SyncSystem) relies on the ID returned by Rust matching the JS ID.
-
-        console.log(`[StateManager] Snapshot Loaded. Entities: ${snap.ecs.entities.length}`);
+        console.log(`[StateManager] Snapshot Loaded. Remapped ${oldIds.length} entities.`);
     }
 }

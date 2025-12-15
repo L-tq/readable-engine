@@ -14,6 +14,7 @@ import { ErrorReporter } from './core/ErrorReporter';
 import { HeadlessRunner } from './core/HeadlessRunner';
 import { ASCIIMapParser } from './utils/ASCIIMapParser';
 import { DataManager } from './data/DataManager';
+import { CameraManager } from './core/CameraManager';
 
 async function main() {
     // 0. Init Data Layer
@@ -48,6 +49,10 @@ async function runInteractive(useRealNetwork: boolean, scenarioUrl: string) {
     setupUI();
     const renderer = new GameRenderer('game-canvas');
 
+    // --- CAMERA MANAGER SETUP ---
+    const canvasEl = document.getElementById('game-canvas') as HTMLCanvasElement;
+    const cameraManager = new CameraManager(renderer.camera, canvasEl);
+
     let adapter: INetworkAdapter;
     if (useRealNetwork) {
         adapter = new GeckosAdapter('http://localhost', 9208);
@@ -65,15 +70,28 @@ async function runInteractive(useRealNetwork: boolean, scenarioUrl: string) {
 
     if (scenario) {
         const mapParser = new ASCIIMapParser(hydrator);
-        mapParser.parse(scenario.map.grid, scenario.map.legend);
+
+        // Parse the map and receive the bounds calculated from the grid size
+        const result = mapParser.parse(scenario.map.grid, scenario.map.legend);
+
+        // Apply bounds to camera so player cannot scroll into the void
+        cameraManager.setBounds(result.bounds);
     } else {
         console.error("Failed to load scenario. Starting empty world.");
     }
 
     const render = (alpha: number) => {
         try {
+            // Update Camera Position (Smoothing/Input)
+            cameraManager.update();
+
+            // Sync Sim State -> ECS
             syncSystem(world);
+
+            // Handle User Input (Selection/Commands)
             inputManager.update();
+
+            // Draw Scene
             renderer.render(world, alpha);
         } catch (e) {
             throw e;
@@ -108,8 +126,9 @@ function setupUI() {
     const app = document.getElementById('app');
     if (!app) return;
 
+    // Note: CSS for body/overflow handling is in index.html now
     app.innerHTML = `
-        <div style="position: absolute; top: 10px; left: 10px; color: white; font-family: monospace; pointer-events: none; z-index: 10;">
+        <div id="ui-layer" style="position: absolute; top: 10px; left: 10px; color: white; font-family: monospace; pointer-events: none; z-index: 10;">
             <strong>Readable Engine</strong><br>
             <span id="debug-info">Vibe Mode Active</span>
         </div>

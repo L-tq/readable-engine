@@ -126,9 +126,9 @@ mapParser.parse(`
 
 ## 🗺 Roadmap
 
-- [x] **Phase 1:** Project Skeleton & Tooling.
-- [x] **Phase 2:** Deterministic Core (RVO, Pathfinding).
-- [x] **Phase 3:** ECS & State Hydration (bitECS + Zod).
-- [x] **Phase 4:** Networking (Lockstep Protocol & Input Buffers).
-- [x] **Phase 5:** Rendering (Three.js InstancedMesh).
-- [x] **Phase 6:** Vibe Features (Headless Runner, ASCII Parser, Error Reporter).
+- **Phase 1:** Project Skeleton & Tooling.
+- **Phase 2:** Deterministic Core (RVO, Pathfinding).
+- **Phase 3:** ECS & State Hydration (bitECS + Zod).
+- **Phase 4:** Networking (Lockstep Protocol & Input Buffers).
+- **Phase 5:** Rendering (Three.js InstancedMesh).
+- **Phase 6:** Vibe Features (Headless Runner, ASCII Parser, Error Reporter).

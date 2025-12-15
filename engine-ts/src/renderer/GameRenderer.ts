@@ -4,8 +4,10 @@ import { Position, PrevPosition, Renderable } from '../ecs/components';
 import { Assets } from './AssetManager';
 
 export class GameRenderer {
+    // PUBLIC: Exposed so CameraManager can control it
+    public camera: THREE.PerspectiveCamera;
+
     private scene: THREE.Scene;
-    private camera: THREE.PerspectiveCamera;
     private renderer: THREE.WebGLRenderer;
     private raycaster = new THREE.Raycaster();
     private groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // y=0
@@ -23,6 +25,7 @@ export class GameRenderer {
         this.scene.background = new THREE.Color(0x111111);
 
         this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        // Default start position (will be overridden by CameraManager)
         this.camera.position.set(0, 40, 40);
         this.camera.lookAt(0, 0, 0);
 
@@ -55,7 +58,7 @@ export class GameRenderer {
         const entities = this.renderQuery(world);
 
         // 1. Group entities by Model ID
-        // In a production engine, you'd cache these arrays to avoid GC
+        // In a production engine, you'd cache these arrays to avoid GC pressure
         const groups = new Map<number, number[]>();
 
         for (const eid of entities) {
@@ -106,6 +109,8 @@ export class GameRenderer {
     private getOrCreateInstancedMesh(modelId: number, capacity: number): THREE.InstancedMesh {
         if (this.meshGroups.has(modelId)) {
             const existing = this.meshGroups.get(modelId)!;
+            // Check if the geometry matches (in case assets reloaded), logic omitted for brevity
+            // Check capacity
             if (existing.instanceMatrix.count >= capacity) return existing;
         }
 
@@ -113,8 +118,10 @@ export class GameRenderer {
         const mat = Assets.getMaterial(modelId);
         const mesh = new THREE.InstancedMesh(geo, mat, capacity);
 
-        // Optimization: Mark as dynamic
+        // Optimization: Mark as dynamic since we update it every frame
         mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
 
         this.scene.add(mesh);
         this.meshGroups.set(modelId, mesh);

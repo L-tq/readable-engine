@@ -10,15 +10,40 @@
             font-family: monospace;
             background: #111;
             color: #0f0;
-            padding: 20px;
+            padding: 0;
+            /* Remove padding */
+            margin: 0;
+            /* Remove margin */
+            overflow: hidden;
+            /* HIDDEN SCROLLBARS */
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        canvas {
+            display: block;
         }
     </style>
 </head>
 
 <body>
-    <div id="app">Loading Engine...</div>
+    <div id="app">
+        <div id="ui-layer">
+            <strong>Readable Engine</strong><br>
+            <span id="debug-info">Vibe Mode Active</span>
+        </div>
+        <canvas id="game-canvas"></canvas>
+    </div>
 
-    <!-- This line connects the HTML to your TypeScript code -->
     <script type="module" src="/src/main.ts"></script>
 </body>
 

@@ -127,6 +127,5 @@ Remind the LLM:
 - [x] **Phase 2:** Deterministic Core (RVO, Pathfinding).
 - [x] **Phase 3:** ECS & State Hydration (bitECS + Zod).
 - [x] **Phase 4:** Networking (Lockstep Protocol & Input Buffers).
-- [ ] **Phase 5:** Rendering (Three.js InstancedMesh).
-- [ ] **Phase 6:** "Headless" Auto-Balancer.
+- [x] **Phase 5:** Rendering (Three.js InstancedMesh).
 ```

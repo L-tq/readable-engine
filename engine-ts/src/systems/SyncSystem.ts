@@ -1,29 +1,34 @@
-import { IWorld } from 'bitecs';
+import { IWorld, hasComponent, addComponent } from 'bitecs';
 import { SimBridge } from '../core/SimBridge';
-import { Position, Velocity } from '../ecs/components';
+import { Position, Velocity, PrevPosition } from '../ecs/components';
 
 export const createSyncSystem = (bridge: SimBridge) => {
     return (world: IWorld) => {
         const buffer = bridge.getStateBuffer();
         if (!buffer) return world;
 
-        // Buffer Layout: [id, x, y, vx, vy]
-        // Stride = 5
-        const stride = 5;
+        const stride = 5; // [id, x, y, vx, vy]
         const count = buffer.length / stride;
 
         for (let i = 0; i < count; i++) {
             const offset = i * stride;
             const id = buffer[offset];
 
-            // Check if entity exists in world (Safety)
-            // In bitECS, we assume the ID from Rust matches the Entity ID
+            // Ensure entity has PrevPosition for interpolation
+            if (!hasComponent(world, PrevPosition, id)) {
+                addComponent(world, PrevPosition, id);
+                // Initialize Prev with current (prevents flying in from 0,0)
+                PrevPosition.x[id] = buffer[offset + 1];
+                PrevPosition.y[id] = buffer[offset + 2];
+            } else {
+                // Copy Current -> Prev before updating Current
+                PrevPosition.x[id] = Position.x[id];
+                PrevPosition.y[id] = Position.y[id];
+            }
 
-            // Sync Position
+            // Sync New State
             Position.x[id] = buffer[offset + 1];
             Position.y[id] = buffer[offset + 2];
-
-            // Sync Velocity
             Velocity.x[id] = buffer[offset + 3];
             Velocity.y[id] = buffer[offset + 4];
         }

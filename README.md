@@ -10,7 +10,7 @@ It is built specifically to be "piloted" by Large Language Models. API surfaces 
 
 ## 🏗 Architecture
 
-The engine follows the **Deterministic Lockstep** model used in games like *StarCraft* and *Age of Empires*.
+The engine follows the **Deterministic Lockstep** model used in games like *StarCraft* and *Age of Empires*, with a dedicated layer for automated testing and LLM interaction.
 
 ### 1. The Core (`/core-sim`) - Rust 🦀
 The "Black Box" of the engine. It handles the heavy lifting where binary determinism is required.
@@ -31,26 +31,29 @@ The "Glue" that connects the simulation to the browser.
 The engine uses a **Virtual Server Pattern** to decouple game logic from transport.
 *   **Lockstep Manager:** Buffers inputs and pauses the simulation if the "Tick Bundle" for the current turn hasn't arrived.
 *   **Adapters:**
-    *   `LocalAdapter`: Runs a local "Virtual Server" that ticks every 66ms. Used for Single Player & Development.
-    *   `GeckosAdapter`: Uses **WebRTC** (via Geckos.io) for high-performance UDP networking.
+    *   `LocalAdapter`: Single-player loopback (66ms tick).
+    *   `GeckosAdapter`: UDP-like WebRTC for multiplayer.
+    *   `HeadlessAdapter`: Synchronous adapter for high-speed automated testing.
 
-### 4. The Data (`/game-data`) - JSON 📄
-The "Interface" for the LLM.
-*   **Zod Schemas:** Strict validation ensures the LLM doesn't "hallucinate" invalid properties.
-*   **Usage:** Units are defined purely as data.
+### 4. Vibe Tools (QA & Automation) 🤖
+Tools designed specifically for LLM context and automated verification.
+*   **ErrorReporter:** Captures game state snapshots (JSON) when a crash occurs, allowing LLMs to debug via text logs.
+*   **ASCIIMapParser:** Allows defining levels using simple text grids.
+*   **HeadlessRunner:** Runs the simulation at max speed without rendering to verify game balance.
 
 ---
 
-## 🚀 Current Status: Phase 4 (Networking)
+## 🚀 Current Status: Phase 6 (Vibe Features)
 
-We have successfully implemented the **Networking & Lockstep Layer**.
+We have preliminary implemented the entire Vibe Coding toolset.
 
-### ✅ Implemented Features:
+### ✅ Preliminary Implemented Features:
 *   **Virtual Server:** `LocalAdapter` simulates server authority and latency for robust single-player testing.
 *   **Lockstep Protocol:** Deterministic input execution with "Playout Delay" to mask network jitter.
 *   **RVO & Flow Fields:** Deterministic pathfinding in Rust.
 *   **bitECS Integration:** High-performance SoA (Structure of Arrays) in TypeScript.
-*   **Binary Sync:** Zero-copy memory transfer from Rust Physics -> TypeScript ECS.
+*   **Rendering:** Three.js InstancedMesh with alpha interpolation.
+*   **Automation:** Headless mode and ASCII level parsing.
 
 ---
 
@@ -84,9 +87,10 @@ Start the Vite development server.
 npm run dev
 ```
 
-### Networking Modes
-*   **Single Player (Default):** Uses `LocalAdapter`. Just open the URL.
-*   **Multiplayer (Geckos.io):** Append `?net` to the URL (e.g., `http://localhost:5173/?net`). *Note: Requires a running Geckos.io server instance.*
+### Modes
+*   **Single Player (Default):** `http://localhost:5173/`
+*   **Multiplayer:** `http://localhost:5173/?net` (Requires Geckos.io server)
+*   **Headless (QA):** `http://localhost:5173/?headless` (Runs simulation and outputs results to DOM)
 
 ---
 
@@ -97,27 +101,26 @@ When working with an LLM to build games on this engine, follow these rules:
 ### 1. The "Hydrator" Protocol
 Do not write classes for units. Write **Data**.
 **Prompt:** "Create a JSON definition for a fast Scout Unit."
-**Expected Output:**
-```json
-{
-  "name": "Scout",
-  "components": {
-    "Position": { "x": 0, "y": 0 },
-    "Health": { "current": 20, "max": 20 },
-    "UnitState": { "state": "IDLE" },
-    "Physics": { "radius": 0.3, "max_speed": 1.2 }
-  }
-}
-```
 
 ### 2. The "Manifest"
-Provide the contents of `engine-ts/src/data/schema.ts` to the LLM. This tells it exactly what Components are available (Health, Velocity, etc.) so it doesn't invent fake ones.
+Provide `engine-ts/src/data/schema.ts` to the LLM. This is its "dictionary" of available components.
 
-### 3. Simulation vs. Visualization
-Remind the LLM:
-*   **Simulation (Rust):** Happens at 15 ticks/sec. Discrete. Integer/Fixed-point.
-*   **Visualization (JS):** Happens at 60 frames/sec. Interpolated.
-*   *Rule:* Never put game logic in the `requestAnimationFrame` loop.
+### 3. Level Design via ASCII
+**Prompt:** "Create a map with a base in the top left and a choke point in the middle."
+**LLM Response:**
+```typescript
+mapParser.parse(`
+#####
+#B .#
+#. #
+# . #
+#####
+`);
+```
+
+### 4. Automated Balancing
+**Prompt:** "Simulate 50 Zerglings vs 10 Marines. Who wins?"
+**LLM Action:** The LLM should generate a script using `HeadlessRunner`, run it with `?headless`, and read the JSON output.
 
 ---
 
@@ -128,4 +131,4 @@ Remind the LLM:
 - [x] **Phase 3:** ECS & State Hydration (bitECS + Zod).
 - [x] **Phase 4:** Networking (Lockstep Protocol & Input Buffers).
 - [x] **Phase 5:** Rendering (Three.js InstancedMesh).
-```
+- [x] **Phase 6:** Vibe Features (Headless Runner, ASCII Parser, Error Reporter).

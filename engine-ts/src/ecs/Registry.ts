@@ -1,5 +1,6 @@
 import { Component, World, hasComponent, removeComponent, addComponent } from 'bitecs';
 import * as C from './components';
+import { Assets } from '../renderer/AssetManager'; // Import AssetManager
 
 type ComponentSetter = (world: World, eid: number, data: any) => void;
 type ComponentGetter = (world: World, eid: number) => any;
@@ -7,12 +8,11 @@ type ComponentGetter = (world: World, eid: number) => any;
 interface RegistryEntry {
     name: string;
     component: Component;
-    setter: ComponentSetter;     // JSON -> ECS
-    serializer: ComponentGetter; // ECS -> JSON
+    setter: ComponentSetter;
+    serializer: ComponentGetter;
 }
 
 export class ComponentRegistry {
-    // Map human-readable string to component logic
     public map = new Map<string, RegistryEntry>();
 
     constructor() {
@@ -50,25 +50,32 @@ export class ComponentRegistry {
         // --- UNIT STATE ---
         this.register('UnitState', C.UnitState,
             (w, e, d) => {
-                // @ts-ignore - Runtime check for enum mapping
+                // @ts-ignore
                 const val = C.UnitStateMap[d.state] ?? 0;
                 C.UnitState.state[e] = val;
             },
             (w, e) => {
                 const val = C.UnitState.state[e];
-                // Reverse map int -> string for JSON readability
                 const key = Object.keys(C.UnitStateMap).find(k => (C.UnitStateMap as any)[k] === val);
                 return { state: key || "IDLE" };
             }
         );
 
-        // "Physics" is excluded here because it is a Virtual Component handled by Rust,
-        // not a bitECS component. It is handled explicitly in the Hydrator/StateManager.
+        // --- NEW: RENDERABLE ---
+        this.register('Renderable', C.Renderable,
+            (w, e, d) => {
+                // Convert String Name -> Numeric ID via AssetManager
+                const id = Assets.getModelId(d.modelName);
+                C.Renderable.modelId[e] = id;
+            },
+            (w, e) => {
+                // For now, we don't have a reverse lookup in AssetManager easily exposed,
+                // but for saving state, we might just save the ID or implement reverse lookup later.
+                return { modelName: "Unknown" };
+            }
+        );
     }
 
-    /**
-     * Registers a component for use with the Hydrator and Snapshot system.
-     */
     register(name: string, component: Component, setter: ComponentSetter, serializer: ComponentGetter) {
         this.map.set(name, { name, component, setter, serializer });
     }
@@ -77,9 +84,6 @@ export class ComponentRegistry {
         return this.map.get(name);
     }
 
-    /**
-     * Returns all registered components.
-     */
     getAll() {
         return Array.from(this.map.values());
     }

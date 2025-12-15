@@ -1,0 +1,71 @@
+{
+    "Marine": {
+        "name": "Marine",
+        "components": {
+            "Health": {
+                "current": 50,
+                "max": 50
+            },
+            "Physics": {
+                "radius": 0.5,
+                "max_speed": 1.0
+            },
+            "UnitState": {
+                "state": "IDLE"
+            },
+            "Renderable": {
+                "modelName": "Marine"
+            }
+        }
+    },
+    "Zergling": {
+        "name": "Zergling",
+        "components": {
+            "Health": {
+                "current": 35,
+                "max": 35
+            },
+            "Physics": {
+                "radius": 0.35,
+                "max_speed": 2.5
+            },
+            "UnitState": {
+                "state": "IDLE"
+            },
+            "Renderable": {
+                "modelName": "Zergling"
+            }
+        }
+    },
+    "Tank": {
+        "name": "Tank",
+        "components": {
+            "Health": {
+                "current": 150,
+                "max": 150
+            },
+            "Physics": {
+                "radius": 0.8,
+                "max_speed": 0.6
+            },
+            "UnitState": {
+                "state": "IDLE"
+            },
+            "Renderable": {
+                "modelName": "Tank"
+            }
+        }
+    },
+    "Wall": {
+        "name": "Wall",
+        "components": {
+            "Physics": {
+                "radius": 1.0,
+                "max_speed": 0.0
+            },
+            "Renderable": {
+                "modelName": "Wall"
+            }
+        }
+    }
+}

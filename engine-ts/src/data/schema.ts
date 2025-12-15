@@ -6,8 +6,7 @@ export const Vector2Schema = z.object({
     y: z.number()
 });
 
-// 2. Component Schemas (The "Vibe" part - Human Readable)
-// These keys must match the registration keys in the ECS Registry.
+// 2. Component Schemas
 export const ComponentsSchema = z.object({
     Position: Vector2Schema.optional(),
     Velocity: Vector2Schema.optional(),
@@ -21,10 +20,14 @@ export const ComponentsSchema = z.object({
     Physics: z.object({
         radius: z.number(),
         max_speed: z.number()
+    }).optional(),
+    // CHANGE: Use modelName (string) instead of modelId (number)
+    Renderable: z.object({
+        modelName: z.string()
     }).optional()
 });
 
-// 3. Entity Definition (What the LLM writes)
+// 3. Entity Definition
 export const EntityDefSchema = z.object({
     name: z.string(),
     components: ComponentsSchema

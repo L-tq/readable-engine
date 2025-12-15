@@ -1,0 +1,24 @@
+{
+    "id": "zerg_rush_01",
+    "description": "50 Zerglings vs 10 Marines in a choke point",
+    "maxTicks": 500,
+    "winCondition": {
+        "type": "ELIMINATE_TYPE",
+        "targetType": "Marine"
+    },
+    "map": {
+        "legend": {
+            "#": "Wall",
+            "M": "Marine",
+            "Z": "Zergling",
+            ".": null
+        },
+        "grid": [
+            "#########################",
+            "#M M M      .      Z Z Z#",
+            "#M . M      .      Z Z Z#",
+            "#           .           #",
+            "#########################"
+        ]
+    }
+}

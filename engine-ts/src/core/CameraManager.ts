@@ -8,7 +8,7 @@ export class CameraManager {
     private readonly PAN_SPEED = 1.0;
     private readonly EDGE_THRESHOLD = 20;
     private readonly ZOOM_SPEED = 5.0;
-    private readonly MIN_ZOOM = 10;
+    private readonly MIN_ZOOM = 8;
     private readonly MAX_ZOOM = 80;
 
     // Lower smoothing value = "Heavier" / Smoother feel (0.05 - 0.1 is good)
@@ -135,24 +135,25 @@ export class CameraManager {
             this.currentLookAt.copy(this.targetLookAt);
             this.currentZoom = this.targetZoom;
         } else {
-            // Smoothly interpolate the LookAt point
             this.currentLookAt.lerp(this.targetLookAt, this.SMOOTHING);
-            // Smoothly interpolate Zoom
             this.currentZoom += (this.targetZoom - this.currentZoom) * this.SMOOTHING;
         }
 
         // 4. Calculate Camera Position RELATIVE to the smoothed LookAt
-        // Standard RTS Angle: 45 degrees (Offset Y = Offset Z)
-        const offsetHeight = this.currentZoom;
-        const offsetBack = this.currentZoom;
+
+        // To look down more (steeper): Make Y larger than Z.
+        // Example: 1.5x Height and 0.7x Back creates a steep RTS look (~65 degrees)
+        const offsetHeight = this.currentZoom * 1.5;
+        const offsetBack = this.currentZoom * 0.75;
 
         this.camera.position.set(
             this.currentLookAt.x,
-            offsetHeight, // Height
-            this.currentLookAt.z + offsetBack // Back
+            offsetHeight,
+            this.currentLookAt.z + offsetBack
         );
 
         // 5. Look at the SMOOTHED point
+        // Because we are higher and closer, lookAt automatically pitches the camera down
         this.camera.lookAt(this.currentLookAt);
     }
 }

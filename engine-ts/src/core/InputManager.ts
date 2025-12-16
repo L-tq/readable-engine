@@ -11,7 +11,7 @@ export class InputManager {
     constructor(
         private canvasId: string,
         private world: IWorld,
-        privatelockstep: LockstepManager,
+        private lockstep: LockstepManager,
         private renderer: GameRenderer
     ) {
         this.setupListeners();

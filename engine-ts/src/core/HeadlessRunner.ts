@@ -6,6 +6,8 @@ import { HeadlessAdapter } from "../network/HeadlessAdapter";
 import { ErrorReporter } from "./ErrorReporter";
 import { createSyncSystem } from "../systems/SyncSystem";
 import { Health } from "../ecs/components";
+import { ScenarioDef } from "../data/DataManager"; // Import ScenarioDef
+import { ASCIIMapParser } from "../utils/ASCIIMapParser"; // Import ASCIIMapParser
 
 export interface SimulationResult {
     winner: string;
@@ -46,6 +48,18 @@ export class HeadlessRunner {
             hydrator: this.hydrator,
             bridge: this.bridge
         };
+    }
+
+    /**
+     * Parsing and running a scenario definition
+     */
+    async runScenario(scenario: ScenarioDef): Promise<SimulationResult> {
+        // 1. Parse Map & Spawn Units
+        const mapParser = new ASCIIMapParser(this.hydrator);
+        mapParser.parse(scenario.map.grid, scenario.map.legend);
+
+        // 2. Run Simulation
+        return this.run(scenario.maxTicks);
     }
 
     /**

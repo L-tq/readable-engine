@@ -1,6 +1,6 @@
 import { Component, World, hasComponent, removeComponent, addComponent } from 'bitecs';
 import * as C from './components';
-import { Assets } from '../renderer/AssetManager'; // Import AssetManager
+import { Assets } from '../renderer/AssetManager';
 
 type ComponentSetter = (world: World, eid: number, data: any) => void;
 type ComponentGetter = (world: World, eid: number) => any;
@@ -20,34 +20,23 @@ export class ComponentRegistry {
     }
 
     private registerCoreComponents() {
-        // --- POSITION ---
+        // ... (Previous components: Position, Velocity, Health, etc) ...
+
         this.register('Position', C.Position,
-            (w, e, d) => {
-                C.Position.x[e] = d.x;
-                C.Position.y[e] = d.y;
-            },
+            (w, e, d) => { C.Position.x[e] = d.x; C.Position.y[e] = d.y; },
             (w, e) => ({ x: C.Position.x[e], y: C.Position.y[e] })
         );
 
-        // --- VELOCITY ---
         this.register('Velocity', C.Velocity,
-            (w, e, d) => {
-                C.Velocity.x[e] = d.x;
-                C.Velocity.y[e] = d.y;
-            },
+            (w, e, d) => { C.Velocity.x[e] = d.x; C.Velocity.y[e] = d.y; },
             (w, e) => ({ x: C.Velocity.x[e], y: C.Velocity.y[e] })
         );
 
-        // --- HEALTH ---
         this.register('Health', C.Health,
-            (w, e, d) => {
-                C.Health.current[e] = d.current;
-                C.Health.max[e] = d.max;
-            },
+            (w, e, d) => { C.Health.current[e] = d.current; C.Health.max[e] = d.max; },
             (w, e) => ({ current: C.Health.current[e], max: C.Health.max[e] })
         );
 
-        // --- UNIT STATE ---
         this.register('UnitState', C.UnitState,
             (w, e, d) => {
                 // @ts-ignore
@@ -61,18 +50,19 @@ export class ComponentRegistry {
             }
         );
 
-        // --- NEW: RENDERABLE ---
         this.register('Renderable', C.Renderable,
             (w, e, d) => {
-                // Convert String Name -> Numeric ID via AssetManager
                 const id = Assets.getModelId(d.modelName);
                 C.Renderable.modelId[e] = id;
             },
-            (w, e) => {
-                // For now, we don't have a reverse lookup in AssetManager easily exposed,
-                // but for saving state, we might just save the ID or implement reverse lookup later.
-                return { modelName: "Unknown" };
-            }
+            (w, e) => ({ modelName: "Unknown" })
+        );
+
+        // --- NEW: Register Selectable ---
+        // It's a Tag Component (no data), so setter/serializer are empty
+        this.register('Selectable', C.Selectable,
+            (w, e, d) => { /* No data to set */ },
+            (w, e) => ({})
         );
     }
 

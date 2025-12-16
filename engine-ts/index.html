@@ -11,13 +11,12 @@
             background: #111;
             color: #0f0;
             padding: 0;
-            /* Remove padding */
             margin: 0;
-            /* Remove margin */
             overflow: hidden;
-            /* HIDDEN SCROLLBARS */
             width: 100vw;
             height: 100vh;
+            user-select: none;
+            /* Prevent text highlighting while dragging */
         }
 
         #ui-layer {
@@ -27,6 +26,16 @@
             color: white;
             pointer-events: none;
             z-index: 10;
+        }
+
+        #selection-box {
+            position: absolute;
+            border: 1px solid #0f0;
+            background-color: rgba(0, 255, 0, 0.1);
+            pointer-events: none;
+            /* Let clicks pass through */
+            display: none;
+            z-index: 20;
         }
 
         canvas {
@@ -41,6 +50,8 @@
             <strong>Readable Engine</strong><br>
             <span id="debug-info">Vibe Mode Active</span>
         </div>
+        <!-- NEW: The Selection Box Element -->
+        <div id="selection-box"></div>
         <canvas id="game-canvas"></canvas>
     </div>
 

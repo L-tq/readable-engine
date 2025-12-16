@@ -19,7 +19,7 @@ import { CameraManager } from './core/CameraManager';
 async function main() {
     // 0. Init Data Layer
     const dataManager = DataManager.getInstance();
-    await dataManager.loadUnits(); // Load 'game-data/units.json'
+    await dataManager.loadUnits();
 
     // 1. Parse URL Params
     const urlParams = new URLSearchParams(window.location.search);
@@ -36,6 +36,9 @@ async function main() {
 }
 
 async function runInteractive(useRealNetwork: boolean, scenarioUrl: string) {
+    // Setup UI first so elements exist for Renderers/InputManagers
+    setupUI();
+
     const bridge = new SimBridge();
     await bridge.init();
 
@@ -46,10 +49,7 @@ async function runInteractive(useRealNetwork: boolean, scenarioUrl: string) {
     const stateManager = new StateManager(world, bridge);
     const syncSystem = ErrorReporter.wrapSystem("SyncSystem", createSyncSystem(bridge));
 
-    setupUI();
     const renderer = new GameRenderer('game-canvas');
-
-    // --- CAMERA MANAGER SETUP ---
     const canvasEl = document.getElementById('game-canvas') as HTMLCanvasElement;
     const cameraManager = new CameraManager(renderer.camera, canvasEl);
 
@@ -62,36 +62,25 @@ async function runInteractive(useRealNetwork: boolean, scenarioUrl: string) {
     const lockstep = new LockstepManager(adapter, bridge);
     await lockstep.init();
 
+    // Input Manager needs the selection-box element to exist now
     const inputManager = new InputManager('game-canvas', world, lockstep, renderer);
 
-    // --- LOAD SCENARIO ---
     console.log(`[Main] Loading Scenario: ${scenarioUrl}`);
     const scenario = await DataManager.getInstance().loadScenario(scenarioUrl);
 
     if (scenario) {
         const mapParser = new ASCIIMapParser(hydrator);
-
-        // Parse the map and receive the bounds calculated from the grid size
         const result = mapParser.parse(scenario.map.grid, scenario.map.legend);
-
-        // Apply bounds to camera so player cannot scroll into the void
         cameraManager.setBounds(result.bounds);
     } else {
-        console.error("Failed to load scenario. Starting empty world.");
+        console.error("Failed to load scenario.");
     }
 
     const render = (alpha: number) => {
         try {
-            // Update Camera Position (Smoothing/Input)
             cameraManager.update();
-
-            // Sync Sim State -> ECS
             syncSystem(world);
-
-            // Handle User Input (Selection/Commands)
             inputManager.update();
-
-            // Draw Scene
             renderer.render(world, alpha);
         } catch (e) {
             throw e;
@@ -107,14 +96,10 @@ async function runHeadless(scenarioUrl: string) {
     await runner.init();
 
     const scenario = await DataManager.getInstance().loadScenario(scenarioUrl);
-    if (!scenario) {
-        document.body.innerText = "Error: Could not load scenario JSON.";
-        return;
-    }
+    if (!scenario) return;
 
     const result = await runner.runScenario(scenario);
 
-    // Display Result for Vibe Coding / LLM
     const output = document.createElement('pre');
     output.style.color = '#0f0';
     output.style.padding = '20px';
@@ -126,12 +111,23 @@ function setupUI() {
     const app = document.getElementById('app');
     if (!app) return;
 
-    // Note: CSS for body/overflow handling is in index.html now
+    // INJECT HTML including the Selection Box
     app.innerHTML = `
         <div id="ui-layer" style="position: absolute; top: 10px; left: 10px; color: white; font-family: monospace; pointer-events: none; z-index: 10;">
             <strong>Readable Engine</strong><br>
             <span id="debug-info">Vibe Mode Active</span>
         </div>
+        
+        <!-- SELECTION BOX -->
+        <div id="selection-box" style="
+            position: absolute;
+            border: 1px solid #0f0;
+            background-color: rgba(0, 255, 0, 0.2);
+            pointer-events: none;
+            display: none;
+            z-index: 20;
+        "></div>
+
         <canvas id="game-canvas"></canvas>
     `;
 

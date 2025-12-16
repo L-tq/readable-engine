@@ -21,10 +21,12 @@ export const ComponentsSchema = z.object({
         radius: z.number(),
         max_speed: z.number()
     }).optional(),
-    // CHANGE: Use modelName (string) instead of modelId (number)
     Renderable: z.object({
         modelName: z.string()
-    }).optional()
+    }).optional(),
+
+    // NEW: Allow "Selectable" (Empty object)
+    Selectable: z.object({}).optional()
 });
 
 // 3. Entity Definition

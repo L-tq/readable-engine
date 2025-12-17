@@ -87,11 +87,6 @@ Start the Vite development server.
 npm run dev
 ```
 
-### Modes
-*   **Single Player (Default):** `http://localhost:5173/`
-*   **Multiplayer:** `http://localhost:5173/?net` (Requires Geckos.io server)
-*   **Headless (QA):** `http://localhost:5173/?headless` (Runs simulation and outputs results to DOM)
-
 ---
 
 ## 🤖 Vibe Coding Guide (How to prompt this engine)

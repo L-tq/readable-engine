@@ -15,7 +15,8 @@
             },
             "Renderable": {
                 "modelName": "Marine"
-            }
+            },
+            "Selectable": {}
         }
     },
     "Zergling": {
@@ -34,7 +35,8 @@
             },
             "Renderable": {
                 "modelName": "Zergling"
-            }
+            },
+            "Selectable": {}
         }
     },
     "Tank": {
@@ -53,7 +55,8 @@
             },
             "Renderable": {
                 "modelName": "Tank"
-            }
+            },
+            "Selectable": {}
         }
     },
     "Wall": {

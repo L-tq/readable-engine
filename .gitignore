@@ -21,3 +21,6 @@ pnpm-debug.log*
 
 # Auto-generated
 generated/
+
+# Large assets
+cat.glb

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 export class TitleScreen {
     private scene: THREE.Scene;
@@ -8,7 +9,6 @@ export class TitleScreen {
     private canvas: HTMLCanvasElement;
 
     // Animated objects
-    private cubes: THREE.Mesh[] = [];
     private pivot: THREE.Group;
 
     constructor(canvasId: string) {
@@ -45,39 +45,28 @@ export class TitleScreen {
         this.pivot = new THREE.Group();
         this.scene.add(this.pivot);
 
-        // Add some floating geometric shapes
-        const geometry = new THREE.BoxGeometry(1, 1, 1);
-        const material = new THREE.MeshStandardMaterial({
-            color: 0x444444,
-            roughness: 0.2,
-            metalness: 0.8
-        });
+        // Load Voxel Cat
+        const loader = new GLTFLoader();
+        loader.load('/game-data/assets/models/ui/cat_voxel.gltf', (gltf) => {
+            const model = gltf.scene;
+            // Center it?
+            const box = new THREE.Box3().setFromObject(model);
+            const center = box.getCenter(new THREE.Vector3());
+            model.position.sub(center); // Center pivot
 
-        for (let i = 0; i < 20; i++) {
+            // Initial scale might be needed depending on the original GLB size
+            model.scale.set(5, 5, 5);
+
+            this.pivot.add(model);
+        }, undefined, (err) => {
+            console.error("Failed to load title asset", err);
+
+            // Fallback: Add a simple box if load fails
+            const geometry = new THREE.BoxGeometry(1, 1, 1);
+            const material = new THREE.MeshStandardMaterial({ color: 0xff0000 });
             const cube = new THREE.Mesh(geometry, material);
-            cube.position.x = (Math.random() - 0.5) * 15;
-            cube.position.y = (Math.random() - 0.5) * 5;
-            cube.position.z = (Math.random() - 0.5) * 15;
-            cube.rotation.x = Math.random() * Math.PI;
-            cube.rotation.y = Math.random() * Math.PI;
-
-            const scale = Math.random() * 0.5 + 0.5;
-            cube.scale.set(scale, scale, scale);
-
             this.pivot.add(cube);
-            this.cubes.push(cube);
-        }
-
-        // Add a central "Core" object
-        const coreGeo = new THREE.IcosahedronGeometry(2, 1);
-        const coreMat = new THREE.MeshPhongMaterial({
-            color: 0x00ff88,
-            emissive: 0x004422,
-            shininess: 50,
-            wireframe: true
         });
-        const core = new THREE.Mesh(coreGeo, coreMat);
-        this.pivot.add(core);
 
         window.addEventListener('resize', this.onResize);
     }
@@ -100,9 +89,6 @@ export class TitleScreen {
             this.animationId = null;
         }
         window.removeEventListener('resize', this.onResize);
-        // We don't dispose renderer as we reuse the canvas, 
-        // but we should clear the scene to free memory if we were being strict.
-        // For now, just stopping the loop is enough.
     }
 
     private animate = () => {
@@ -111,15 +97,8 @@ export class TitleScreen {
         const time = Date.now() * 0.001;
 
         // Rotate entire group
-        this.pivot.rotation.y = Math.sin(time * 0.2) * 0.5;
-        this.pivot.rotation.x = Math.cos(time * 0.1) * 0.2;
-
-        // Animate individual cubes
-        this.cubes.forEach((cube, i) => {
-            cube.rotation.x += 0.01;
-            cube.rotation.y += 0.02;
-            cube.position.y += Math.sin(time + i) * 0.01;
-        });
+        this.pivot.rotation.y = Math.sin(time * 0.2) * 0.5 + time * 0.1; // Spin slowly
+        this.pivot.rotation.x = Math.cos(time * 0.1) * 0.1;
 
         this.renderer.render(this.scene, this.camera);
     }

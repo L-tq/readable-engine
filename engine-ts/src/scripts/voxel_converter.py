@@ -4,19 +4,17 @@
 ║                        BEAUTIFUL VOXEL ART CONVERTER                          ║
 ║                                                                               ║
 ║  Converts 3D models (.glb/.gltf/.obj) to voxel art style                     ║
-║  Preserves colors from vertex colors, textures, and materials                 ║
-║  Exports as .gltf with proper color attributes                                ║
+║  FIX: Now handles Multi-Material Scenes correctly preserving textures         ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 """
 
 import numpy as np
 import trimesh
 from pathlib import Path
-from collections import defaultdict
 import json
-import struct
 import base64
 import warnings
+from PIL import Image
 
 warnings.filterwarnings('ignore')
 
@@ -27,9 +25,9 @@ warnings.filterwarnings('ignore')
 INPUT_PATH = './game-data/assets/models/ui/cat.glb'
 OUTPUT_PATH = './game-data/assets/models/ui/cat_voxel.gltf'
 
-VOXEL_RESOLUTION = 32      # Number of voxels along largest axis (higher = more detail)
-VOXEL_GAP = 0.05           # Gap between voxels (0-0.5, 0 = no gap, 0.1 = 10% gap)
-COLOR_QUANTIZATION = 4     # Color quantization level (1 = no quantization, higher = fewer colors)
+VOXEL_RESOLUTION = 64      # Number of voxels along largest axis
+VOXEL_GAP = 0.0           # Gap between voxels (0-0.5)
+COLOR_QUANTIZATION = 1     # 1 = Original colors (Keep this 1 to debug color first)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # COLOR SAMPLING UTILITIES
@@ -56,453 +54,324 @@ def get_barycentric_coords(point, v0, v1, v2):
     v = (dot00 * dot12 - dot01 * dot02) * inv_denom
     w = 1.0 - u - v
     
-    return np.clip(np.array([w, u, v]), 0, 1)
-
+    return np.array([w, u, v])
 
 def sample_texture_color(mesh, face_id, barycentric):
     """Sample color from texture using UV coordinates."""
     try:
+        # Check visuals existence
         if not hasattr(mesh.visual, 'uv') or mesh.visual.uv is None:
             return None
-        if not hasattr(mesh.visual, 'material'):
+        
+        material = getattr(mesh.visual, 'material', None)
+        if material is None:
             return None
-            
-        material = mesh.visual.material
+
+        # Extract Image from Material (Handle Trimesh PBR & Simple Materials)
         image = None
+        if hasattr(material, 'baseColorTexture') and material.baseColorTexture is not None:
+             # PBR Material
+            image = material.baseColorTexture
+        elif hasattr(material, 'image') and material.image is not None:
+            # Simple Material
+            image = material.image
         
-        # Try different ways to get the texture image
-        if hasattr(material, 'image') and material.image is not None:
-            image = np.array(material.image)
-        elif hasattr(material, 'baseColorTexture') and material.baseColorTexture is not None:
-            image = np.array(material.baseColorTexture)
-        
+        # If we got a PIL Image, convert to numpy array
+        if image is not None and not isinstance(image, np.ndarray):
+            image = np.array(image)
+            
         if image is None:
             return None
-        
-        # Get UV coordinates for face vertices
+
+        # Get UV coordinates
         face_vertices = mesh.faces[face_id]
         uvs = mesh.visual.uv[face_vertices]
         
-        # Interpolate UV using barycentric coordinates
-        bary_norm = barycentric / np.sum(barycentric)
-        interpolated_uv = np.sum(uvs * bary_norm[:, np.newaxis], axis=0)
+        # Interpolate UV
+        interpolated_uv = np.dot(barycentric, uvs)
         
-        # Handle UV wrapping
-        u = interpolated_uv[0] % 1.0
-        v = interpolated_uv[1] % 1.0
-        
-        # Convert to pixel coordinates (flip V for OpenGL convention)
+        # UV Wrapping and Pixel coordinates
+        u, v = interpolated_uv[0] % 1.0, interpolated_uv[1] % 1.0
         h, w = image.shape[:2]
-        px = int(u * (w - 1))
-        py = int((1.0 - v) * (h - 1))
         
-        px = np.clip(px, 0, w - 1)
-        py = np.clip(py, 0, h - 1)
+        # Note: GLTF UV origin is usually top-left, but OpenGL is bottom-left.
+        # If colors look inverted vertically, flip the 'v' calculation.
+        px = int(u * (w - 1))
+        py = int((1.0 - v) * (h - 1)) # Flip V for standard UV mapping
         
         color = image[py, px]
         
-        # Ensure RGBA format
+        # Ensure RGBA
         if len(color) == 3:
-            color = np.append(color, 255)
-        
+            return np.append(color, 255).astype(np.uint8)
         return color.astype(np.uint8)
         
     except Exception:
         return None
-
-
-def sample_vertex_color(mesh, face_id, barycentric):
-    """Sample color from vertex colors using interpolation."""
-    try:
-        if not hasattr(mesh.visual, 'vertex_colors') or mesh.visual.vertex_colors is None:
-            return None
-        
-        face_vertices = mesh.faces[face_id]
-        vertex_colors = mesh.visual.vertex_colors[face_vertices].astype(float)
-        
-        # Interpolate using barycentric coordinates
-        bary_norm = barycentric / np.sum(barycentric)
-        interpolated = np.sum(vertex_colors * bary_norm[:, np.newaxis], axis=0)
-        
-        return np.clip(interpolated, 0, 255).astype(np.uint8)
-        
-    except Exception:
-        return None
-
-
-def sample_face_color(mesh, face_id):
-    """Get color from face colors."""
-    try:
-        if not hasattr(mesh.visual, 'face_colors') or mesh.visual.face_colors is None:
-            return None
-        
-        color = mesh.visual.face_colors[face_id]
-        
-        if len(color) == 3:
-            color = np.append(color, 255)
-        
-        return color.astype(np.uint8)
-        
-    except Exception:
-        return None
-
-
-def sample_material_color(mesh):
-    """Get color from material properties."""
-    try:
-        if not hasattr(mesh.visual, 'material'):
-            return None
-        
-        material = mesh.visual.material
-        
-        # Try PBR baseColorFactor
-        if hasattr(material, 'baseColorFactor') and material.baseColorFactor is not None:
-            color = np.array(material.baseColorFactor)
-            if np.max(color) <= 1.0:
-                color = color * 255
-            if len(color) == 3:
-                color = np.append(color, 255)
-            return color.astype(np.uint8)
-        
-        # Try diffuse color
-        if hasattr(material, 'diffuse') and material.diffuse is not None:
-            color = np.array(material.diffuse)
-            if np.max(color) <= 1.0:
-                color = color * 255
-            if len(color) == 3:
-                color = np.append(color, 255)
-            return color[:4].astype(np.uint8)
-        
-        # Try main_color
-        if hasattr(material, 'main_color') and material.main_color is not None:
-            color = np.array(material.main_color)
-            if np.max(color) <= 1.0:
-                color = color * 255
-            if len(color) == 3:
-                color = np.append(color, 255)
-            return color[:4].astype(np.uint8)
-        
-        return None
-        
-    except Exception:
-        return None
-
 
 def sample_color_from_mesh(mesh, point, face_id):
-    """
-    Sample color from mesh using multiple fallback methods.
-    Priority: Texture > Vertex Colors > Face Colors > Material > Default
-    """
-    default_color = np.array([200, 200, 200, 255], dtype=np.uint8)
+    """Sample color with fallback priority."""
+    default_color = np.array([180, 180, 180, 255], dtype=np.uint8)
     
     try:
-        # Get face vertices and calculate barycentric coordinates
         face_vertices = mesh.faces[face_id]
         v0, v1, v2 = mesh.vertices[face_vertices]
         barycentric = get_barycentric_coords(point, v0, v1, v2)
         
-        # Try texture sampling first (highest quality)
+        # 1. Texture
         color = sample_texture_color(mesh, face_id, barycentric)
-        if color is not None:
-            return color
+        if color is not None: return color
         
-        # Try vertex colors
-        color = sample_vertex_color(mesh, face_id, barycentric)
-        if color is not None:
-            return color
+        # 2. Vertex Colors
+        if hasattr(mesh.visual, 'vertex_colors') and len(mesh.visual.vertex_colors) > 0:
+            vertex_colors = mesh.visual.vertex_colors[face_vertices]
+            color = np.dot(barycentric, vertex_colors)
+            return color.astype(np.uint8)
         
-        # Try face colors
-        color = sample_face_color(mesh, face_id)
-        if color is not None:
-            return color
-        
-        # Try material color
-        color = sample_material_color(mesh)
-        if color is not None:
-            return color
-        
-    except Exception:
+        # 3. Face Colors
+        if hasattr(mesh.visual, 'face_colors') and len(mesh.visual.face_colors) > 0:
+            return mesh.visual.face_colors[face_id].astype(np.uint8)
+
+        # 4. Material Base Color
+        if hasattr(mesh.visual, 'material'):
+            mat = mesh.visual.material
+            # PBR
+            if hasattr(mat, 'baseColorFactor') and mat.baseColorFactor is not None:
+                c = np.array(mat.baseColorFactor)
+                return (c * 255).astype(np.uint8) if c.max() <= 1.0 else c.astype(np.uint8)
+            # Standard
+            if hasattr(mat, 'main_color') and mat.main_color is not None:
+                return mat.main_color.astype(np.uint8)
+
+    except Exception as e:
         pass
     
     return default_color
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
-# VOXELIZATION ENGINE
+# VOXELIZATION ENGINE (UPDATED)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def voxelize_mesh(mesh, resolution=32):
+def get_scene_meshes(input_path):
     """
-    Convert mesh to voxel grid with color information.
+    Load scene and return a list of INDIVIDUAL meshes with their transforms applied.
+    We do NOT concatenate them to preserve texture maps.
     """
-    print("  ├─ Calculating bounds...")
-    bounds = mesh.bounds
-    # FIX: Create copies of the bounds so we can modify them
-    min_bound = bounds[0].copy()
-    max_bound = bounds[1].copy()
+    scene = trimesh.load(str(input_path))
+    meshes = []
+    
+    if isinstance(scene, trimesh.Trimesh):
+        meshes.append(scene)
+    elif isinstance(scene, trimesh.Scene):
+        # Flatten scene graph
+        for name, geometry in scene.geometry.items():
+            # Get the transform for this node
+            if name in scene.graph:
+                transform, _ = scene.graph.get(name)
+                # Create a copy so we don't mess up the original scene references
+                m = geometry.copy()
+                m.apply_transform(transform)
+                meshes.append(m)
+            else:
+                # Some geometries might be instanced or handled differently,
+                # but usually scene.dump() or iterating geometry + graph covers it.
+                # A safer way to get everything as a list of distinct meshes:
+                dump = scene.dump(concatenate=False) 
+                if isinstance(dump, list):
+                    meshes = dump
+                else:
+                    meshes = [dump]
+                break 
+    else:
+        raise ValueError(f"Unknown format: {type(scene)}")
+        
+    return meshes
+
+def voxelize_scene(meshes, resolution=32):
+    """
+    Voxelize multiple meshes into a single shared grid.
+    """
+    print("  ├─ Calculating global bounds...")
+    
+    # Calculate global bounds across all meshes
+    all_bounds = np.array([m.bounds for m in meshes])
+    min_bound = np.min(all_bounds[:, 0, :], axis=0)
+    max_bound = np.max(all_bounds[:, 1, :], axis=0)
     
     dimensions = max_bound - min_bound
     max_dim = np.max(dimensions)
     
-    # Add slight padding
-    padding = max_dim * 0.02
+    # Add padding
+    padding = max_dim * 0.05
     min_bound -= padding
     max_bound += padding
     
-    # Recalculate max_dim with padding included
-    max_dim = np.max(max_bound - min_bound)
-    
-    voxel_size = max_dim / resolution
+    # Calculate voxel size based on global resolution
+    real_dim = np.max(max_bound - min_bound)
+    voxel_size = real_dim / resolution
     
     print(f"  ├─ Voxel size: {voxel_size:.6f}")
-    print("  ├─ Running voxelization...")
     
-    # Use trimesh's voxelization
-    try:
-        # We need to pass the pitch (voxel_size) to voxelized
-        # Note: trimesh.voxel.creation.voxelize(mesh, pitch) is essentially what mesh.voxelized does
-        voxel_grid = mesh.voxelized(pitch=voxel_size)
-        filled_matrix = voxel_grid.matrix
-        voxel_origin = voxel_grid.transform[:3, 3]
-    except Exception as e:
-        print(f"  └─ ERROR: Voxelization failed: {e}")
-        return [], voxel_size
+    # Dictionary to store voxels: Key=(x,y,z), Value=Color
+    # Using a dict prevents duplicate voxels at overlaps
+    voxel_dict = {}
     
-    # Get indices of filled voxels
-    filled_indices = np.argwhere(filled_matrix)
-    total_voxels = len(filled_indices)
+    print(f"  ├─ Processing {len(meshes)} sub-meshes...")
     
-    print(f"  ├─ Found {total_voxels} filled voxels")
-    print("  ├─ Sampling colors...")
-    
-    # Prepare for color sampling
-    voxel_data = []
-    
-    # Progress tracking
-    progress_step = max(1, total_voxels // 10)
-    
-    for i, idx in enumerate(filled_indices):
-        # Calculate voxel center in world coordinates
-        # voxel_origin is usually the center of the voxel at index [0,0,0] or the corner
-        # For trimesh VoxelGrid, transform maps indices to spatial coordinates.
-        # Usually: point = transform * [x, y, z, 1]
+    for i, mesh in enumerate(meshes):
+        print(f"  │  ├─ Mesh {i+1}: {len(mesh.vertices)} verts")
         
-        # Determine center using the grid transform
-        grid_index = np.append(idx, 1) # [x, y, z, 1]
-        # We want the center of the voxel, so we add 0.5 to indices if the transform points to corners
-        # Trimesh voxel encoding usually aligns center. Let's stick to the transform matrix multiplication for accuracy.
-        
-        # Manual transform: origin + index * scale (if axis aligned)
-        # Using the matrix multiplication is safer:
-        center_index = idx.astype(float) # Center is implied by the integer index in the matrix representation? 
-        # Actually trimesh VoxelGrid.points returns centers. 
-        # But since we are iterating indices manually, let's calculate standard center:
-        center = voxel_origin + (idx.astype(float)) * voxel_size 
-        # Note: Depending on trimesh version, origin might be corner or center. 
-        # Usually simpler to rely on the logic: origin + index * size
-        
-        # Find nearest surface point and sample color
         try:
-            closest, distance, face_id = mesh.nearest.on_surface([center])
-            color = sample_color_from_mesh(mesh, closest[0], face_id[0])
-        except Exception:
-            color = np.array([200, 200, 200, 255], dtype=np.uint8)
-        
-        # Optional: Quantize colors for a more stylized look
-        if COLOR_QUANTIZATION > 1:
-            color[:3] = (color[:3] // COLOR_QUANTIZATION) * COLOR_QUANTIZATION
-        
-        voxel_data.append({
-            'center': center.copy(),
-            'color': color.copy()
-        })
-        
-        # Progress indicator
-        if (i + 1) % progress_step == 0:
-            progress = (i + 1) / total_voxels * 100
-            print(f"  │   └─ Progress: {progress:.0f}%")
-    
-    print(f"  └─ Completed: {len(voxel_data)} voxels with colors")
+            # Voxelize this specific mesh using the global pitch
+            # Note: trimesh.voxelized creates a grid aligned to the mesh unless specified.
+            # To ensure alignment across multiple meshes, we need to map points carefully.
+            
+            # Method: Use trimesh's voxelizer, then convert to global grid indices
+            local_grid = mesh.voxelized(pitch=voxel_size)
+            
+            # Get the centers of the filled voxels in world space
+            # 'points' property returns the center of occupied voxels
+            world_points = local_grid.points
+            
+            if len(world_points) == 0:
+                continue
+
+            # Find nearest point on the source mesh surface for color sampling
+            closest_points, distances, face_ids = mesh.nearest.on_surface(world_points)
+            
+            # Convert world points to integer grid keys for our global map
+            # This ensures perfect alignment between different meshes
+            grid_indices = np.floor(world_points / voxel_size).astype(int)
+            
+            for j in range(len(world_points)):
+                # Create a tuple key for dictionary
+                key = tuple(grid_indices[j])
+                
+                # If we already have this voxel, you might want logic to decide 
+                # which one keeps (e.g., closest to camera), but usually first or last wins.
+                if key not in voxel_dict:
+                    point = closest_points[j]
+                    face_id = face_ids[j]
+                    
+                    color = sample_color_from_mesh(mesh, point, face_id)
+                    
+                    # Quantize
+                    if COLOR_QUANTIZATION > 1:
+                        color[:3] = (color[:3] // COLOR_QUANTIZATION) * COLOR_QUANTIZATION
+                    
+                    # Store center calculated from the discrete key to ensure perfect alignment
+                    # (Optional: use the actual world_point from voxelizer)
+                    voxel_center = (np.array(key) * voxel_size) + (voxel_size * 0.5)
+                    
+                    voxel_dict[key] = {
+                        'center': voxel_center,
+                        'color': color
+                    }
+                    
+        except Exception as e:
+            print(f"  │  └─ Warning: Mesh {i+1} failed voxelization: {e}")
+            continue
+
+    # Convert dict to list
+    voxel_data = list(voxel_dict.values())
+    print(f"  └─ Generated {len(voxel_data)} unique voxels")
     
     return voxel_data, voxel_size
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
-# VOXEL GEOMETRY BUILDER
+# MESH BUILDER
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def create_cube_geometry(center, size, gap=0.05):
-    """
-    Create vertices and faces for a single voxel cube.
-    """
     half = size * (0.5 - gap / 2)
+    # 8 vertices
+    v = np.array([
+        [-1,-1,-1], [1,-1,-1], [1,1,-1], [-1,1,-1],
+        [-1,-1, 1], [1,-1, 1], [1,1, 1], [-1,1, 1]
+    ]) * half + center
     
-    # 8 vertices of cube
-    vertices = np.array([
-        [-half, -half, -half],  # 0: left  bottom back
-        [+half, -half, -half],  # 1: right bottom back
-        [+half, +half, -half],  # 2: right top    back
-        [-half, +half, -half],  # 3: left  top    back
-        [-half, -half, +half],  # 4: left  bottom front
-        [+half, -half, +half],  # 5: right bottom front
-        [+half, +half, +half],  # 6: right top    front
-        [-half, +half, +half],  # 7: left  top    front
-    ]) + center
-    
-    # 12 triangles (2 per face, 6 faces)
-    faces = np.array([
-        # Back face (z-)
-        [0, 2, 1], [0, 3, 2],
-        # Front face (z+)
-        [4, 5, 6], [4, 6, 7],
-        # Bottom face (y-)
-        [0, 1, 5], [0, 5, 4],
-        # Top face (y+)
-        [3, 6, 2], [3, 7, 6],
-        # Left face (x-)
-        [0, 4, 7], [0, 7, 3],
-        # Right face (x+)
-        [1, 2, 6], [1, 6, 5],
+    # 12 triangles (indices)
+    f = np.array([
+        [0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7], # Back, Front
+        [0, 1, 5], [0, 5, 4], [3, 6, 2], [3, 7, 6], # Bottom, Top
+        [0, 4, 7], [0, 7, 3], [1, 2, 6], [1, 6, 5]  # Left, Right
     ])
-    
-    return vertices, faces
-
+    return v, f
 
 def build_combined_mesh(voxel_data, voxel_size, gap=0.05):
-    """
-    Build a single optimized mesh from all voxels.
-    """
-    if not voxel_data:
-        return None
+    if not voxel_data: return None
     
-    total_voxels = len(voxel_data)
-    print(f"  ├─ Building geometry for {total_voxels} voxels...")
+    count = len(voxel_data)
+    vertices = np.zeros((count * 8, 3), dtype=np.float32)
+    faces = np.zeros((count * 12, 3), dtype=np.uint32)
+    colors = np.zeros((count * 8, 4), dtype=np.uint8)
     
-    # Pre-allocate arrays for efficiency
-    all_vertices = np.zeros((total_voxels * 8, 3), dtype=np.float32)
-    all_faces = np.zeros((total_voxels * 12, 3), dtype=np.int32)
-    all_colors = np.zeros((total_voxels * 8, 4), dtype=np.uint8)
-    
-    for i, voxel in enumerate(voxel_data):
-        vertices, faces = create_cube_geometry(voxel['center'], voxel_size, gap)
+    for i, data in enumerate(voxel_data):
+        v_local, f_local = create_cube_geometry(data['center'], voxel_size, gap)
+        idx_v = i * 8
+        idx_f = i * 12
         
-        v_start = i * 8
-        f_start = i * 12
+        vertices[idx_v:idx_v+8] = v_local
+        faces[idx_f:idx_f+12] = f_local + idx_v
+        colors[idx_v:idx_v+8] = data['color']
         
-        all_vertices[v_start:v_start + 8] = vertices
-        all_faces[f_start:f_start + 12] = faces + v_start
-        all_colors[v_start:v_start + 8] = voxel['color']
-    
-    print("  ├─ Creating mesh object...")
-    
-    # Create trimesh object
-    mesh = trimesh.Trimesh(
-        vertices=all_vertices,
-        faces=all_faces,
-        process=False
-    )
-    
-    # Apply vertex colors
-    mesh.visual.vertex_colors = all_colors
-    
-    # Count unique colors
-    unique_colors = np.unique(all_colors[:, :3], axis=0)
-    print(f"  ├─ Unique colors: {len(unique_colors)}")
-    print(f"  └─ Final mesh: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces")
-    
+    mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+    mesh.visual.vertex_colors = colors
     return mesh
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
-# GLTF EXPORT
+# GLTF EXPORT (MANUAL IS SAFER FOR VERTEX COLORS)
 # ═══════════════════════════════════════════════════════════════════════════════
-
-def export_gltf_with_colors(mesh, output_path):
-    """
-    Export mesh to GLTF format with vertex colors properly preserved.
-    Uses trimesh's built-in exporter with color support.
-    """
-    print("  ├─ Preparing GLTF export...")
-    
-    # Ensure vertex colors are set properly
-    if mesh.visual.vertex_colors is None:
-        mesh.visual.vertex_colors = np.full((len(mesh.vertices), 4), [200, 200, 200, 255], dtype=np.uint8)
-    
-    # Export using trimesh (handles vertex colors automatically in modern versions)
-    print("  ├─ Writing GLTF file...")
-    
-    try:
-        # Try the standard export first
-        mesh.export(str(output_path), file_type='gltf')
-        print(f"  └─ Saved: {output_path}")
-        return True
-    except Exception as e:
-        print(f"  │   Warning: Standard export failed ({e})")
-        print("  ├─ Trying alternative export method...")
-    
-    # Alternative: Manual GLTF creation with proper vertex colors
-    try:
-        export_gltf_manual(mesh, output_path)
-        print(f"  └─ Saved: {output_path}")
-        return True
-    except Exception as e:
-        print(f"  └─ ERROR: Export failed: {e}")
-        return False
-
 
 def export_gltf_manual(mesh, output_path):
     """
-    Manual GLTF export with explicit vertex color support.
+    Exports GLTF ensuring Vertex Colors are written as COLOR_0 accessor.
+    Uses a neutral material to ensure colors show up un-tinted.
     """
+    # Ensure data types
     vertices = mesh.vertices.astype(np.float32)
-    faces = mesh.faces.astype(np.uint32)
-    colors = mesh.visual.vertex_colors.astype(np.float32) / 255.0  # Normalize to 0-1
+    indices = mesh.faces.flatten().astype(np.uint32)
     
-    # Calculate normals
-    mesh.fix_normals()
+    # Normalize colors to 0.0 - 1.0 floats for GLTF
+    colors = mesh.visual.vertex_colors.astype(np.float32) / 255.0
+    
+    # Calculate normals if missing
+    if mesh.vertex_normals is None:
+        mesh.fix_normals()
     normals = mesh.vertex_normals.astype(np.float32)
     
-    # Create binary buffer
-    buffer_data = bytearray()
+    # Binary Blob Construction
+    blob = bytearray()
     
-    # Positions
-    positions_offset = len(buffer_data)
-    positions_bytes = vertices.tobytes()
-    buffer_data.extend(positions_bytes)
+    def add_buffer_view(data):
+        offset = len(blob)
+        blob.extend(data.tobytes())
+        length = len(blob) - offset
+        return offset, length
+
+    pos_off, pos_len = add_buffer_view(vertices)
+    norm_off, norm_len = add_buffer_view(normals)
+    col_off, col_len = add_buffer_view(colors)
+    ind_off, ind_len = add_buffer_view(indices)
     
-    # Normals
-    normals_offset = len(buffer_data)
-    normals_bytes = normals.tobytes()
-    buffer_data.extend(normals_bytes)
+    # Bounds
+    min_pos = vertices.min(axis=0).tolist()
+    max_pos = vertices.max(axis=0).tolist()
     
-    # Colors (as VEC4 float)
-    colors_offset = len(buffer_data)
-    colors_bytes = colors.astype(np.float32).tobytes()
-    buffer_data.extend(colors_bytes)
-    
-    # Indices
-    indices_offset = len(buffer_data)
-    indices_bytes = faces.flatten().astype(np.uint32).tobytes()
-    buffer_data.extend(indices_bytes)
-    
-    # Calculate bounds
-    pos_min = vertices.min(axis=0).tolist()
-    pos_max = vertices.max(axis=0).tolist()
-    
-    # Create GLTF structure
     gltf = {
-        "asset": {
-            "version": "2.0",
-            "generator": "Voxel Art Converter"
-        },
-        "scene": 0,
-        "scenes": [{"nodes": [0]}],
-        "nodes": [{
-            "mesh": 0,
-            "name": "VoxelMesh"
+        "asset": {"version": "2.0", "generator": "VoxelConverter_Fixed"},
+        "scene": 0, "scenes": [{"nodes": [0]}],
+        "nodes": [{"mesh": 0, "name": "VoxelObject"}],
+        "materials": [{
+            "name": "VertexColorMat",
+            "pbrMetallicRoughness": {
+                "baseColorFactor": [1, 1, 1, 1], # Multiply by vertex color
+                "metallicFactor": 0.0,
+                "roughnessFactor": 1.0
+            },
+            "doubleSided": True
         }],
         "meshes": [{
-            "name": "VoxelMesh",
             "primitives": [{
                 "attributes": {
                     "POSITION": 0,
@@ -513,327 +382,62 @@ def export_gltf_manual(mesh, output_path):
                 "material": 0
             }]
         }],
-        "materials": [{
-            "name": "VoxelMaterial",
-            "pbrMetallicRoughness": {
-                "metallicFactor": 0.0,
-                "roughnessFactor": 0.8
-            }
-        }],
         "accessors": [
-            {
-                "bufferView": 0,
-                "byteOffset": 0,
-                "componentType": 5126,  # FLOAT
-                "count": len(vertices),
-                "type": "VEC3",
-                "min": pos_min,
-                "max": pos_max
-            },
-            {
-                "bufferView": 1,
-                "byteOffset": 0,
-                "componentType": 5126,  # FLOAT
-                "count": len(normals),
-                "type": "VEC3"
-            },
-            {
-                "bufferView": 2,
-                "byteOffset": 0,
-                "componentType": 5126,  # FLOAT
-                "count": len(colors),
-                "type": "VEC4"
-            },
-            {
-                "bufferView": 3,
-                "byteOffset": 0,
-                "componentType": 5125,  # UNSIGNED_INT
-                "count": len(faces) * 3,
-                "type": "SCALAR"
-            }
+            {"bufferView": 0, "componentType": 5126, "count": len(vertices), "type": "VEC3", "min": min_pos, "max": max_pos}, # POS
+            {"bufferView": 1, "componentType": 5126, "count": len(normals), "type": "VEC3"},  # NORM
+            {"bufferView": 2, "componentType": 5126, "count": len(colors), "type": "VEC4"},   # COL (Float)
+            {"bufferView": 3, "componentType": 5125, "count": len(indices), "type": "SCALAR"} # IND (Uint32)
         ],
         "bufferViews": [
-            {
-                "buffer": 0,
-                "byteOffset": positions_offset,
-                "byteLength": len(positions_bytes),
-                "target": 34962  # ARRAY_BUFFER
-            },
-            {
-                "buffer": 0,
-                "byteOffset": normals_offset,
-                "byteLength": len(normals_bytes),
-                "target": 34962  # ARRAY_BUFFER
-            },
-            {
-                "buffer": 0,
-                "byteOffset": colors_offset,
-                "byteLength": len(colors_bytes),
-                "target": 34962  # ARRAY_BUFFER
-            },
-            {
-                "buffer": 0,
-                "byteOffset": indices_offset,
-                "byteLength": len(indices_bytes),
-                "target": 34963  # ELEMENT_ARRAY_BUFFER
-            }
+            {"buffer": 0, "byteOffset": pos_off, "byteLength": pos_len, "target": 34962},
+            {"buffer": 0, "byteOffset": norm_off, "byteLength": norm_len, "target": 34962},
+            {"buffer": 0, "byteOffset": col_off, "byteLength": col_len, "target": 34962},
+            {"buffer": 0, "byteOffset": ind_off, "byteLength": ind_len, "target": 34963}
         ],
         "buffers": [{
-            "byteLength": len(buffer_data),
-            "uri": "data:application/octet-stream;base64," + base64.b64encode(bytes(buffer_data)).decode('ascii')
+            "byteLength": len(blob),
+            "uri": "data:application/octet-stream;base64," + base64.b64encode(blob).decode('utf-8')
         }]
     }
     
-    # Write GLTF file
     with open(output_path, 'w') as f:
-        json.dump(gltf, f, indent=2)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# DEMO MESH GENERATOR
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def create_demo_cat_mesh():
-    """
-    Create a simple cat-shaped mesh with colors for demonstration.
-    """
-    print("  ├─ Creating demo cat mesh...")
-    
-    meshes = []
-    
-    # Cat body (ellipsoid)
-    body = trimesh.creation.icosphere(subdivisions=3, radius=0.4)
-    body.vertices[:, 0] *= 1.5  # Stretch along X
-    body.vertices[:, 2] *= 0.8  # Compress along Z
-    body.apply_translation([0, 0, 0])
-    body_colors = np.full((len(body.vertices), 4), [255, 180, 100, 255], dtype=np.uint8)
-    body.visual.vertex_colors = body_colors
-    meshes.append(body)
-    
-    # Cat head
-    head = trimesh.creation.icosphere(subdivisions=3, radius=0.25)
-    head.apply_translation([0.5, 0.15, 0])
-    head_colors = np.full((len(head.vertices), 4), [255, 190, 110, 255], dtype=np.uint8)
-    head.visual.vertex_colors = head_colors
-    meshes.append(head)
-    
-    # Left ear
-    ear_l = trimesh.creation.cone(radius=0.08, height=0.15)
-    ear_l.apply_translation([0.45, 0.4, -0.1])
-    ear_colors = np.full((len(ear_l.vertices), 4), [255, 160, 90, 255], dtype=np.uint8)
-    ear_l.visual.vertex_colors = ear_colors
-    meshes.append(ear_l)
-    
-    # Right ear
-    ear_r = trimesh.creation.cone(radius=0.08, height=0.15)
-    ear_r.apply_translation([0.45, 0.4, 0.1])
-    ear_r.visual.vertex_colors = ear_colors.copy()
-    meshes.append(ear_r)
-    
-    # Tail
-    tail = trimesh.creation.cylinder(radius=0.05, height=0.5)
-    tail.apply_translation([-0.8, 0.1, 0])
-    tail.vertices[:, 1] += tail.vertices[:, 0] * 0.3  # Curve upward
-    tail_colors = np.full((len(tail.vertices), 4), [230, 160, 80, 255], dtype=np.uint8)
-    tail.visual.vertex_colors = tail_colors
-    meshes.append(tail)
-    
-    # Legs
-    for x, z in [(-0.3, -0.15), (-0.3, 0.15), (0.2, -0.15), (0.2, 0.15)]:
-        leg = trimesh.creation.cylinder(radius=0.06, height=0.3)
-        leg.apply_translation([x, -0.25, z])
-        leg_colors = np.full((len(leg.vertices), 4), [240, 170, 90, 255], dtype=np.uint8)
-        leg.visual.vertex_colors = leg_colors
-        meshes.append(leg)
-    
-    # Eyes
-    for z in [-0.08, 0.08]:
-        eye = trimesh.creation.icosphere(subdivisions=2, radius=0.04)
-        eye.apply_translation([0.7, 0.2, z])
-        eye_colors = np.full((len(eye.vertices), 4), [50, 200, 100, 255], dtype=np.uint8)
-        eye.visual.vertex_colors = eye_colors
-        meshes.append(eye)
-    
-    # Nose
-    nose = trimesh.creation.icosphere(subdivisions=2, radius=0.03)
-    nose.apply_translation([0.73, 0.1, 0])
-    nose_colors = np.full((len(nose.vertices), 4), [255, 150, 150, 255], dtype=np.uint8)
-    nose.visual.vertex_colors = nose_colors
-    meshes.append(nose)
-    
-    # Combine all meshes
-    combined = trimesh.util.concatenate(meshes)
-    
-    print(f"  └─ Demo mesh: {len(combined.vertices)} vertices, {len(combined.faces)} faces")
-    
-    return combined
-
+        json.dump(gltf, f)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# MAIN CONVERTER
+# MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def load_mesh(input_path):
-    """
-    Load mesh from file, handling both single meshes and scenes.
-    """
-    scene = trimesh.load(str(input_path))
+def main():
+    print(f"┌─ Processing: {INPUT_PATH}")
     
-    if isinstance(scene, trimesh.Trimesh):
-        return scene
-    
-    if isinstance(scene, trimesh.Scene):
-        meshes = []
-        
-        for name, geometry in scene.geometry.items():
-            if not isinstance(geometry, trimesh.Trimesh):
-                continue
-            
-            # Try to apply scene transform
-            try:
-                transform, _ = scene.graph.get(name)
-                geometry = geometry.copy()
-                geometry.apply_transform(transform)
-            except Exception:
-                pass
-            
-            meshes.append(geometry)
-        
-        if not meshes:
-            raise ValueError("No valid meshes found in scene")
-        
-        # Combine all meshes
-        return trimesh.util.concatenate(meshes)
-    
-    raise ValueError(f"Unsupported format: {type(scene)}")
+    if not Path(INPUT_PATH).exists():
+        print("└─ Error: Input file not found.")
+        return
 
+    # 1. Load Scenes as Separate Meshes (Fixes Texture Loss)
+    try:
+        meshes = get_scene_meshes(INPUT_PATH)
+    except Exception as e:
+        print(f"└─ Error loading mesh: {e}")
+        return
 
-def convert_to_voxel_art(input_path, output_path, resolution=32, gap=0.05):
-    """
-    Main conversion pipeline.
-    """
-    print()
-    print("╔" + "═" * 70 + "╗")
-    print("║" + "BEAUTIFUL VOXEL ART CONVERTER".center(70) + "║")
-    print("╚" + "═" * 70 + "╝")
-    print()
-    
-    input_path = Path(input_path)
-    output_path = Path(output_path)
-    
-    print(f"┌─ Configuration")
-    print(f"│  Input:      {input_path}")
-    print(f"│  Output:     {output_path}")
-    print(f"│  Resolution: {resolution} voxels")
-    print(f"│  Gap:        {gap * 100:.0f}%")
-    print(f"└─────────────────────────────────────────────")
-    print()
-    
-    # ─────────────────────────────────────────────────────────────────────────
-    # Step 1: Load Model
-    # ─────────────────────────────────────────────────────────────────────────
-    print("┌─ [1/4] Loading Model")
-    
-    if input_path.exists():
-        try:
-            mesh = load_mesh(input_path)
-            print(f"│  Loaded: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces")
-            
-            # Check for colors
-            has_vertex_colors = hasattr(mesh.visual, 'vertex_colors') and mesh.visual.vertex_colors is not None
-            has_texture = hasattr(mesh.visual, 'uv') and mesh.visual.uv is not None
-            has_material = hasattr(mesh.visual, 'material') and mesh.visual.material is not None
-            
-            print(f"│  Vertex Colors: {'Yes' if has_vertex_colors else 'No'}")
-            print(f"│  UV/Texture:    {'Yes' if has_texture else 'No'}")
-            print(f"│  Material:      {'Yes' if has_material else 'No'}")
-            print(f"└─────────────────────────────────────────────")
-            
-        except Exception as e:
-            print(f"│  ERROR: Failed to load model: {e}")
-            print(f"│  Creating demo mesh instead...")
-            mesh = create_demo_cat_mesh()
-            print(f"└─────────────────────────────────────────────")
-    else:
-        print(f"│  File not found: {input_path}")
-        print(f"│  Creating demo cat mesh for demonstration...")
-        mesh = create_demo_cat_mesh()
-        print(f"└─────────────────────────────────────────────")
-    
-    print()
-    
-    # ─────────────────────────────────────────────────────────────────────────
-    # Step 2: Voxelize
-    # ─────────────────────────────────────────────────────────────────────────
-    print("┌─ [2/4] Voxelizing Mesh")
-    
-    voxel_data, voxel_size = voxelize_mesh(mesh, resolution)
+    # 2. Voxelize globally
+    voxel_data, voxel_size = voxelize_scene(meshes, VOXEL_RESOLUTION)
     
     if not voxel_data:
-        print("│  ERROR: No voxels generated!")
-        print("└─────────────────────────────────────────────")
-        return False
-    
-    print(f"│  Total voxels: {len(voxel_data)}")
-    print(f"└─────────────────────────────────────────────")
-    print()
-    
-    # ─────────────────────────────────────────────────────────────────────────
-    # Step 3: Build Geometry
-    # ─────────────────────────────────────────────────────────────────────────
-    print("┌─ [3/4] Building Voxel Geometry")
-    
-    voxel_mesh = build_combined_mesh(voxel_data, voxel_size, gap)
-    
-    if voxel_mesh is None:
-        print("│  ERROR: Failed to build mesh!")
-        print("└─────────────────────────────────────────────")
-        return False
-    
-    print(f"└─────────────────────────────────────────────")
-    print()
-    
-    # ─────────────────────────────────────────────────────────────────────────
-    # Step 4: Export GLTF
-    # ─────────────────────────────────────────────────────────────────────────
-    print("┌─ [4/4] Exporting GLTF")
-    
-    # Ensure output directory exists
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    success = export_gltf_with_colors(voxel_mesh, output_path)
-    
-    print(f"└─────────────────────────────────────────────")
-    print()
-    
-    # ─────────────────────────────────────────────────────────────────────────
-    # Summary
-    # ─────────────────────────────────────────────────────────────────────────
-    if success:
-        print("╔" + "═" * 70 + "╗")
-        print("║" + "✓ CONVERSION COMPLETE".center(70) + "║")
-        print("╠" + "═" * 70 + "╣")
-        print("║" + f"  Original: {len(mesh.vertices):,} vertices, {len(mesh.faces):,} faces".ljust(69) + "║")
-        print("║" + f"  Voxel:    {len(voxel_mesh.vertices):,} vertices, {len(voxel_mesh.faces):,} faces".ljust(69) + "║")
-        print("║" + f"  Voxels:   {len(voxel_data):,}".ljust(69) + "║")
-        print("║" + f"  Output:   {output_path}".ljust(69) + "║")
-        print("╚" + "═" * 70 + "╝")
-    else:
-        print("╔" + "═" * 70 + "╗")
-        print("║" + "✗ CONVERSION FAILED".center(70) + "║")
-        print("╚" + "═" * 70 + "╝")
-    
-    return success
+        print("└─ Error: No voxels generated.")
+        return
 
+    # 3. Build Mesh
+    print("  ├─ Building voxel geometry...")
+    final_mesh = build_combined_mesh(voxel_data, voxel_size, VOXEL_GAP)
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# ENTRY POINT
-# ═══════════════════════════════════════════════════════════════════════════════
+    # 4. Export
+    print(f"  ├─ Exporting to {OUTPUT_PATH}")
+    Path(OUTPUT_PATH).parent.mkdir(parents=True, exist_ok=True)
+    export_gltf_manual(final_mesh, OUTPUT_PATH)
+    
+    print("└─ Done.")
 
 if __name__ == "__main__":
-    convert_to_voxel_art(
-        input_path=INPUT_PATH,
-        output_path=OUTPUT_PATH,
-        resolution=VOXEL_RESOLUTION,
-        gap=VOXEL_GAP
-    )
+    main()
